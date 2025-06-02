@@ -70,7 +70,7 @@ train:
   eval_interval: 200
   save_interval: 1000
   random_seed: 42
-  selection: KFold
+  selection: KFold # Stratify
 
 # Cross-validation parameters
 kfold:
@@ -78,7 +78,7 @@ kfold:
   shuffle: True
   random_state: ${train.random_seed}
 
-loo: None
+Stratify: "/home/jinin/userdata/Pansori_2025_ISMIR/data/Stratify/stratify_back.csv"
 
 # Directory paths
 dir:
