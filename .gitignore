@@ -14,3 +14,7 @@ __pycache__/
 # 기타
 *.log
 .DS_Store
+
+outputs/
+/notebookoutput/
+notebook/
