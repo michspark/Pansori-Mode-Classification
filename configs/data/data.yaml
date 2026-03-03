@@ -1,0 +1,7 @@
+dir:
+  midi_dir: /home/sangheon/Desktop/Pansori_Data/rosvot_midi_full/midi
+  label_path: /home/sangheon/Desktop/Pansori_Data/labels_2.json
+
+fs: 100
+window_size: 30
+

@@ -1,0 +1,4 @@
+batch_size: 4
+num_epochs: 50
+lr: 1e-4
+k_folds: 10

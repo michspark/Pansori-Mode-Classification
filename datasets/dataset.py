@@ -1,0 +1,117 @@
+from .dataset_utils import PianoRollGenerator
+from torch.utils.data import Dataset
+from pathlib import Path
+from tqdm import tqdm
+import torch
+import json
+import unicodedata
+import random
+
+
+class BaseDataset(Dataset):
+    label_map = {"우조": 0, "계면조": 1, "others": 2}
+    def __init__(self, data_dir, label_json, song_list=None, fs=100, window_size=30.0, is_train=True):
+        self.data_dir = Path(data_dir)
+        self.song_list = set(song_list) if song_list is not None else None
+        self.fs = fs
+        self.window_size = int(window_size * fs) # convert seconds to frames
+        self.is_train = is_train
+
+        with open(label_json, 'r', encoding='utf-8') as f:
+            raw = json.load(f)
+
+        self.memory_cache = []
+        self.training_instances = []
+
+        for song_idx, item in enumerate(tqdm(raw)):
+            fu = unicodedata.normalize('NFC', item['file_upload'])
+            midi_name = fu.rsplit('.', 1)[0] + '_vocal.mid'
+
+            if self.song_list is not None and midi_name not in self.song_list:
+                continue
+
+            midi_path = self.data_dir / midi_name
+            if not midi_path.exists():
+                continue
+
+            result = item['annotations'][0]['result']
+            if not result:
+                continue
+
+            original_length = result[0]['original_length']
+            gen = PianoRollGenerator(str(midi_path), fs=self.fs)
+            piano_roll = torch.tensor(gen.generate_piano_roll(), dtype=torch.float32)
+            frame_label = self.build_frame_label(original_length, result)
+
+            T = min(piano_roll.shape[1], frame_label.shape[0])
+
+            cache_idx = len(self.memory_cache)
+            self.memory_cache.append({
+                'song_name': midi_name,
+                'piano_roll': piano_roll[:, :T],
+                'frame_label': frame_label[:T, :],
+                'total_frames': T,
+            })
+
+            if self.is_train:
+                num_repeats = max(1, T // self.window_size)
+                for _ in range(num_repeats):
+                    self.training_instances.append(cache_idx)
+
+        if not self.is_train:
+            self.val_segments = self.prepare_val_segments()
+
+    def build_frame_label(self, original_length: float, result: list) -> torch.Tensor:
+        num_frames = int(original_length * self.fs)
+        frame_label = torch.zeros(num_frames, 3)
+        for ann in result:
+            val = ann['value']
+            s = int(val['start'] * self.fs)
+            e = min(int(val['end'] * self.fs), num_frames)
+            name = val['labels'][0]
+            if name in self.label_map:
+                frame_label[s:e, :] = 0
+                frame_label[s:e, self.label_map[name]] = 1
+        return frame_label
+
+    def prepare_val_segments(self):
+        segments = []
+        for idx, item in enumerate(self.memory_cache):
+            for start in range(0, item['total_frames'], self.window_size):
+                segments.append((idx, start))
+        return segments
+
+    def __len__(self):
+        return len(self.training_instances) if self.is_train else len(self.val_segments)
+
+    def __getitem__(self, idx):
+        if self.is_train:
+            song_idx = self.training_instances[idx]
+            item = self.memory_cache[song_idx]
+            if item['total_frames'] > self.window_size:
+                start_frame = random.randint(0, item['total_frames'] - self.window_size)
+            else:
+                start_frame = 0
+        else:
+            song_idx, start_frame = self.val_segments[idx]
+            item = self.memory_cache[song_idx]
+
+        end_frame = start_frame + self.window_size
+        slice_piano = item['piano_roll'][:, start_frame:end_frame]
+        slice_label = item['frame_label'][start_frame:end_frame, :]
+
+        curr_w = slice_piano.shape[1]
+
+        if curr_w < self.window_size:
+            pad_w = self.window_size - curr_w
+            slice_piano= torch.nn.functional.pad(slice_piano, (0, pad_w), value=0)
+            pad_label = torch.zeros((pad_w, 3))
+            pad_label[:, 2] = 1
+            slice_label = torch.cat([slice_label, pad_label], dim=0)
+
+        return item['song_name'], slice_piano, slice_label
+
+
+
+
+
