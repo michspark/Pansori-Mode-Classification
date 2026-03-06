@@ -7,7 +7,6 @@ import json
 import unicodedata
 import random
 
-
 class BaseDataset(Dataset):
     label_map = {"우조": 0, "계면조": 1, "others": 2}
     def __init__(self, data_dir, label_json, song_list=None, fs=100, window_size=30.0, is_train=True):
@@ -69,9 +68,9 @@ class BaseDataset(Dataset):
             s = int(val['start'] * self.fs)
             e = min(int(val['end'] * self.fs), num_frames)
             name = val['labels'][0]
-            if name in self.label_map:
-                frame_label[s:e, :] = 0
-                frame_label[s:e, self.label_map[name]] = 1
+            cls_idx = self.label_map.get(name, self.label_map['others'])
+            frame_label[s:e, :] = 0
+            frame_label[s:e, cls_idx] = 1
         return frame_label
 
     def prepare_val_segments(self):
@@ -80,6 +79,31 @@ class BaseDataset(Dataset):
             for start in range(0, item['total_frames'], self.window_size):
                 segments.append((idx, start))
         return segments
+
+    def pitch_shift(self, piano_roll, shift_range=(-3, 3)):
+        shift = random.randint(*shift_range)
+        if shift == 0:
+            return piano_roll.clone()
+        shifted = torch.roll(piano_roll, shift, dims=0)
+        if shift > 0:
+            shifted[:shift, :] = 0
+        else:
+            shifted[shift:, :] = 0
+        return shifted
+
+    def time_masking(self, piano_roll, total_mask_sec=5.0, num_masks=3):
+        pr = piano_roll.clone()
+        T = pr.shape[1]
+        max_per_mask = int(total_mask_sec * self.fs) // num_masks
+
+        for _ in range(num_masks):
+            mask_len = random.randint(1, max_per_mask)
+            if T <= mask_len:
+                continue
+            start = random.randint(0, T - mask_len)
+            pr[:, start:start + mask_len] = 0
+
+        return pr
 
     def __len__(self):
         return len(self.training_instances) if self.is_train else len(self.val_segments)
@@ -100,17 +124,21 @@ class BaseDataset(Dataset):
         slice_piano = item['piano_roll'][:, start_frame:end_frame]
         slice_label = item['frame_label'][start_frame:end_frame, :]
 
-        curr_w = slice_piano.shape[1]
+        if self.is_train:
+            if random.random() < 0.5:
+                slice_piano = self.pitch_shift(slice_piano)
+            if random.random() < 0.5:
+                slice_piano = self.time_masking(slice_piano)
 
+        curr_w = slice_piano.shape[1]
         if curr_w < self.window_size:
             pad_w = self.window_size - curr_w
-            slice_piano= torch.nn.functional.pad(slice_piano, (0, pad_w), value=0)
+            slice_piano = torch.nn.functional.pad(slice_piano, (0, pad_w), value=0)
             pad_label = torch.zeros((pad_w, 3))
             pad_label[:, 2] = 1
             slice_label = torch.cat([slice_label, pad_label], dim=0)
 
         return item['song_name'], slice_piano, slice_label
-
 
 
 

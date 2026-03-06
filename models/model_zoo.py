@@ -52,4 +52,5 @@ class Conv2DGRU(nn.Module):
 
         x, _ = self.gru(x)
         x = self.fc(x)
+
         return x
