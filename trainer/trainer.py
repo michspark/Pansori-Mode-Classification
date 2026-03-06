@@ -3,7 +3,7 @@ from tqdm import tqdm
 from .metrics import masked_acc, masked_f1
 
 def run_test_epoch(loader, model, criterion, device):
-    """Like run_epoch(train=False) but also returns per-song GT and softmax probs for visualization."""
+    """Rrun_epoch(train=False) but also returns per-song GT and softmax probs for visualization."""
     model.eval()
     total_loss = 0.0
     all_preds, all_tgts = [], []
@@ -57,13 +57,16 @@ def run_epoch(loader, model, optimizer, criterion, device, train=True):
         for _, piano, label in pbar:
             piano = piano.to(device)
             label = label.to(device)
+
+            if train:
+                optimizer.zero_grad()
+
             out = model(piano)
             tgt = label.argmax(dim=-1)
 
             loss = criterion(out.permute(0,2,1), tgt)
 
             if train:
-                optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
 

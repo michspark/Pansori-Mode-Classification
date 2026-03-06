@@ -12,7 +12,7 @@ num_bins : 128
 # GRU
 hidden_dim: 256
 num_gru: 2
-dropout: 0.1
+dropout: 0.4
 
 # Classifier
 num_classes: 3

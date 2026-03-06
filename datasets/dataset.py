@@ -60,6 +60,19 @@ class BaseDataset(Dataset):
         if not self.is_train:
             self.val_segments = self.prepare_val_segments()
 
+    # def build_frame_label(self, original_length: float, result: list) -> torch.Tensor:
+    #    num_frames = int(original_length * self.fs)
+    #   frame_label = torch.zeros(num_frames, 3)
+    #    for ann in result:
+    #        val = ann['value']
+    #        s = int(val['start'] * self.fs)
+    #        e = min(int(val['end'] * self.fs), num_frames)
+    #        name = val['labels'][0]
+    #        cls_idx = self.label_map.get(name, self.label_map['others'])
+    #        frame_label[s:e, :] = 0
+    #        frame_label[s:e, cls_idx] = 1
+    #    return frame_label
+
     def build_frame_label(self, original_length: float, result: list) -> torch.Tensor:
         num_frames = int(original_length * self.fs)
         frame_label = torch.zeros(num_frames, 3)
@@ -68,9 +81,9 @@ class BaseDataset(Dataset):
             s = int(val['start'] * self.fs)
             e = min(int(val['end'] * self.fs), num_frames)
             name = val['labels'][0]
-            cls_idx = self.label_map.get(name, self.label_map['others'])
-            frame_label[s:e, :] = 0
-            frame_label[s:e, cls_idx] = 1
+            if name in self.label_map:
+                frame_label[s:e, :] = 0
+                frame_label[s:e, self.label_map[name]] = 1
         return frame_label
 
     def prepare_val_segments(self):
@@ -102,7 +115,6 @@ class BaseDataset(Dataset):
                 continue
             start = random.randint(0, T - mask_len)
             pr[:, start:start + mask_len] = 0
-
         return pr
 
     def __len__(self):
