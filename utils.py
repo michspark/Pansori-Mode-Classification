@@ -69,29 +69,42 @@ def plot_posteriorgram(song_name, gt, pred_probs):
     pred_probs : (T, 3) numpy array, softmax probabilities
     Returns a matplotlib Figure.
     """
-    CLASS_NAMES = ['우조', '계면조', 'others']
-    # Colors matching class order: 우조=blue, 계면조=red, others=grey
+    CLASS_NAMES = ['no label', 'Ujo', 'GMjo', 'ANR']
     _CMAP = plt.cm.get_cmap('tab10')
-    _CLASS_COLORS = [_CMAP(0), _CMAP(3), _CMAP(7)]  # blue, red, grey
+    _CLASS_COLORS = [_CMAP(7), _CMAP(0), _CMAP(3), _CMAP(2)]  # grey, blue, red, green
 
     T = gt.shape[0]
-    time_axis = np.arange(T)
 
     fig, axes = plt.subplots(2, 1, figsize=(16, 5), sharex=True,
                              constrained_layout=True)
     fig.suptitle(song_name, fontsize=10)
 
-    for ax, data, title in zip(axes, [gt, pred_probs],
-                                ['Ground Truth', 'Predicted Posteriorgram']):
-        im = ax.imshow(data.T, aspect='auto', origin='lower',
-                       vmin=0, vmax=1, cmap='RdYlGn', interpolation='nearest',
-                       extent=[0, T, -0.5, 2.5])
-        ax.set_yticks([0, 1, 2])
-        ax.set_yticklabels(CLASS_NAMES)
-        ax.set_title(title)
+    # --- GT: categorical display (argmax → discrete color per class) ---
+    gt_labels = np.argmax(gt, axis=1)  # (T,)
+    import matplotlib.colors as mcolors
+    gt_cmap = mcolors.ListedColormap([_CLASS_COLORS[i] for i in range(4)])
+    axes[0].imshow(gt_labels[np.newaxis, :], aspect='auto', origin='lower',
+                   cmap=gt_cmap, vmin=-0.5, vmax=3.5, interpolation='nearest',
+                   extent=[0, T, -0.5, 0.5])
+    axes[0].set_yticks([0])
+    axes[0].set_yticklabels(['class'])
+    axes[0].set_title('Ground Truth')
+    # legend patches
+    from matplotlib.patches import Patch
+    legend_handles = [Patch(color=_CLASS_COLORS[i], label=CLASS_NAMES[i]) for i in range(4)]
+    axes[0].legend(handles=legend_handles, loc='upper right', fontsize=8, framealpha=0.7)
+
+    # --- Pred: posteriorgram heatmap per class ---
+    # Flip rows so top→bottom order is: no label, Ujo, GMjo, ANR
+    im = axes[1].imshow(np.flipud(pred_probs.T), aspect='auto', origin='lower',
+                        vmin=0, vmax=1, cmap='RdYlGn', interpolation='nearest',
+                        extent=[0, T, -0.5, 3.5])
+    axes[1].set_yticks([0, 1, 2, 3])
+    axes[1].set_yticklabels(CLASS_NAMES[::-1])
+    axes[1].set_title('Predicted Posteriorgram')
 
     axes[-1].set_xlabel('Frame')
-    fig.colorbar(im, ax=axes.tolist(), label='Probability', shrink=0.8)
+    fig.colorbar(im, ax=axes[1], label='Probability', shrink=0.8)
 
     return fig
 

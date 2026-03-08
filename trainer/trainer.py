@@ -48,13 +48,14 @@ def run_epoch(loader, model, optimizer, criterion, device, train=True):
     model.train() if train else model.eval()
     total_loss = 0.0
     all_preds, all_tgts = [], []
+    song_data = {} if not train else None
 
     ctx = torch.enable_grad() if train else torch.no_grad()
     desc = 'Train' if train else 'Val'
 
     with ctx:
         pbar = tqdm(loader, desc=desc, leave=False)
-        for _, piano, label in pbar:
+        for song_name, piano, label in pbar:
             piano = piano.to(device)
             label = label.to(device)
 
@@ -75,6 +76,19 @@ def run_epoch(loader, model, optimizer, criterion, device, train=True):
             all_preds.append(preds)
             all_tgts.append(tgt.view(-1))
 
+            if not train:
+                pred_probs = torch.softmax(out, dim=-1)
+                name = song_name[0] if isinstance(song_name, (list, tuple)) else song_name
+                if name not in song_data:
+                    song_data[name] = {'gt': [], 'pred_probs': []}
+                song_data[name]['gt'].append(label[0].cpu())
+                song_data[name]['pred_probs'].append(pred_probs[0].cpu())
+
+    if not train:
+        for name in song_data:
+            song_data[name]['gt'] = torch.cat(song_data[name]['gt'], dim=0).numpy()
+            song_data[name]['pred_probs'] = torch.cat(song_data[name]['pred_probs'], dim=0).numpy()
+
     all_preds = torch.cat(all_preds)
     all_tgts  = torch.cat(all_tgts)
 
@@ -82,7 +96,7 @@ def run_epoch(loader, model, optimizer, criterion, device, train=True):
     avg_acc  = masked_acc(all_preds, all_tgts)
     f1       = masked_f1(all_preds, all_tgts)
 
-    return avg_loss, avg_acc, f1
+    return avg_loss, avg_acc, f1, song_data
 
 
 

@@ -15,5 +15,5 @@ num_gru: 2
 dropout: 0.4
 
 # Classifier
-num_classes: 3
+num_classes: 4
 

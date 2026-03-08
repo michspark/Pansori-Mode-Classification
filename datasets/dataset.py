@@ -8,7 +8,11 @@ import unicodedata
 import random
 
 class BaseDataset(Dataset):
-    label_map = {"우조": 0, "계면조": 1, "others": 2}
+    label_map = {
+        "우조": 1, "평조": 1, "경드름": 1, "설렁제": 1,
+        "계면조": 2,
+        "아니리": 3, "창조": 3,
+    }  # 0: no label
     def __init__(self, data_dir, label_json, song_list=None, fs=100, window_size=30.0, is_train=True):
         self.data_dir = Path(data_dir)
         self.song_list = set(song_list) if song_list is not None else None
@@ -75,15 +79,17 @@ class BaseDataset(Dataset):
 
     def build_frame_label(self, original_length: float, result: list) -> torch.Tensor:
         num_frames = int(original_length * self.fs)
-        frame_label = torch.zeros(num_frames, 3)
+        frame_label = torch.zeros(num_frames, 4)
+        frame_label[:, 0] = 1  # default: no label
         for ann in result:
             val = ann['value']
             s = int(val['start'] * self.fs)
             e = min(int(val['end'] * self.fs), num_frames)
             name = val['labels'][0]
             if name in self.label_map:
+                cls_idx = self.label_map[name]
                 frame_label[s:e, :] = 0
-                frame_label[s:e, self.label_map[name]] = 1
+                frame_label[s:e, cls_idx] = 1
         return frame_label
 
     def prepare_val_segments(self):
@@ -146,8 +152,8 @@ class BaseDataset(Dataset):
         if curr_w < self.window_size:
             pad_w = self.window_size - curr_w
             slice_piano = torch.nn.functional.pad(slice_piano, (0, pad_w), value=0)
-            pad_label = torch.zeros((pad_w, 3))
-            pad_label[:, 2] = 1
+            pad_label = torch.zeros((pad_w, 4))
+            pad_label[:, 0] = 1
             slice_label = torch.cat([slice_label, pad_label], dim=0)
 
         return item['song_name'], slice_piano, slice_label

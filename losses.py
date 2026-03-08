@@ -12,8 +12,14 @@ class FocalLoss(nn.Module):
     def forward(self, pred, target):
         log_pt = self.ce(pred, target)
         pt = torch.exp(-log_pt)
-        focal_loss = self.alpha * ((1 - pt) ** self.gamma) * log_pt
+        if isinstance(self.alpha, torch.Tensor):
+            # clamp to avoid out-of-bounds on ignore_index positions
+            alpha_t = self.alpha[target.clamp(min=0)]
+        else:
+            alpha_t = self.alpha
+        focal_loss = alpha_t * ((1 - pt) ** self.gamma) * log_pt
 
         if self.reduction == 'mean': return focal_loss.mean()
         elif self.reduction == 'sum': return focal_loss.sum()
         else: return focal_loss
+
