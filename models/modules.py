@@ -1,4 +1,6 @@
+import torch 
 import torch.nn as nn
+from torch.nn.utils import weight_norm 
 
 class Conv2DBlock(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size, padding, dilation):

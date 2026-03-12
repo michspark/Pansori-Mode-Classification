@@ -4,6 +4,8 @@ import unicodedata
 from pathlib import Path
 import json
 import matplotlib.pyplot as plt
+from matplotlib.patches import Patch
+import csv
 
 def create_kfold_splits(song_list, k=10, seed=42):
     random.seed(seed)
@@ -12,8 +14,6 @@ def create_kfold_splits(song_list, k=10, seed=42):
     song_list_shuffled = song_list.copy()
     random.shuffle(song_list_shuffled)
 
-    # Divide into k chunks for 80/10/10 split
-    # Each fold: test=1 chunk (10%), val=1 chunk (10%), train=k-2 chunks (80%)
     num_chunks = k
     chunk_size = len(song_list_shuffled) // num_chunks
     chunks = []
@@ -25,15 +25,15 @@ def create_kfold_splits(song_list, k=10, seed=42):
 
     folds = []
     for i in range(k):
-        # Test: 1 chunk (10%)
+
         test_idx = i
         test_songs = chunks[test_idx]
 
-        # Val: 1 chunk (10%)
+
         val_idx = (i + 1) % k
         val_songs = chunks[val_idx]
 
-        # Train: remaining k-2 chunks (80%)
+
         train_songs = []
         for j in range(num_chunks):
             if j != test_idx and j != val_idx:
@@ -71,7 +71,7 @@ def plot_posteriorgram(song_name, gt, pred_probs):
     """
     CLASS_NAMES = ['no label', 'Ujo', 'GMjo', 'ANR']
     _CMAP = plt.cm.get_cmap('tab10')
-    _CLASS_COLORS = [_CMAP(7), _CMAP(0), _CMAP(3), _CMAP(2)]  # grey, blue, red, green
+    _CLASS_COLORS = [_CMAP(7), _CMAP(0), _CMAP(3), _CMAP(2)]
 
     T = gt.shape[0]
 
@@ -79,8 +79,7 @@ def plot_posteriorgram(song_name, gt, pred_probs):
                              constrained_layout=True)
     fig.suptitle(song_name, fontsize=10)
 
-    # --- GT: categorical display (argmax → discrete color per class) ---
-    gt_labels = np.argmax(gt, axis=1)  # (T,)
+    gt_labels = np.argmax(gt, axis=1)
     import matplotlib.colors as mcolors
     gt_cmap = mcolors.ListedColormap([_CLASS_COLORS[i] for i in range(4)])
     axes[0].imshow(gt_labels[np.newaxis, :], aspect='auto', origin='lower',
@@ -89,15 +88,12 @@ def plot_posteriorgram(song_name, gt, pred_probs):
     axes[0].set_yticks([0])
     axes[0].set_yticklabels(['class'])
     axes[0].set_title('Ground Truth')
-    # legend patches
-    from matplotlib.patches import Patch
+
     legend_handles = [Patch(color=_CLASS_COLORS[i], label=CLASS_NAMES[i]) for i in range(4)]
     axes[0].legend(handles=legend_handles, loc='upper right', fontsize=8, framealpha=0.7)
 
-    # --- Pred: posteriorgram heatmap per class ---
-    # Flip rows so top→bottom order is: no label, Ujo, GMjo, ANR
     im = axes[1].imshow(np.flipud(pred_probs.T), aspect='auto', origin='lower',
-                        vmin=0, vmax=1, cmap='RdYlGn', interpolation='nearest',
+                        vmin=0, vmax=1, cmap='gray_r', interpolation='nearest',
                         extent=[0, T, -0.5, 3.5])
     axes[1].set_yticks([0, 1, 2, 3])
     axes[1].set_yticklabels(CLASS_NAMES[::-1])
@@ -107,5 +103,52 @@ def plot_posteriorgram(song_name, gt, pred_probs):
     fig.colorbar(im, ax=axes[1], label='Probability', shrink=0.8)
 
     return fig
+
+def plot_confusion_matrix(song_data, save_path):
+    """Build and save a confusion matrix from all songs in song_data."""
+    CLASS_NAMES = ['no label', 'Ujo', 'GMjo', 'ANR']
+    all_gt, all_pred = [], []
+    for data in song_data.values():
+        all_gt.append(np.argmax(data['gt'], axis=1))
+        all_pred.append(np.argmax(data['pred_probs'], axis=1))
+    all_gt = np.concatenate(all_gt)
+    all_pred = np.concatenate(all_pred)
+
+    n = len(CLASS_NAMES)
+    cm = np.zeros((n, n), dtype=int)
+    for t, p in zip(all_gt, all_pred):
+        cm[t, p] += 1
+
+    cm_norm = cm.astype(float) / cm.sum(axis=1, keepdims=True).clip(min=1)
+
+    fig, ax = plt.subplots(figsize=(6, 5), constrained_layout=True)
+    im = ax.imshow(cm_norm, vmin=0, vmax=1, cmap='Blues')
+    fig.colorbar(im, ax=ax, label='Recall')
+    ax.set_xticks(range(n))
+    ax.set_yticks(range(n))
+    ax.set_xticklabels(CLASS_NAMES, rotation=30, ha='right')
+    ax.set_yticklabels(CLASS_NAMES)
+    ax.set_xlabel('Predicted')
+    ax.set_ylabel('True')
+    ax.set_title('Confusion Matrix (normalised by true class)')
+    for i in range(n):
+        for j in range(n):
+            ax.text(j, i, f"{cm[i,j]}\n({cm_norm[i,j]:.2f})",
+                    ha='center', va='center', fontsize=8,
+                    color='white' if cm_norm[i, j] > 0.6 else 'black')
+    fig.savefig(save_path, dpi=120, bbox_inches='tight')
+    plt.close(fig)
+
+
+def save_test_csv(segment_results, csv_path):
+    """Save per-segment test results to CSV."""
+    if not segment_results:
+        return
+    fieldnames = ['song_name', 'time_range', 'start_sec', 'end_sec',
+                  'loss', 'acc', 'f1_ujoh', 'f1_gyemyeon', 'f1_aniri', 'f1_macro']
+    with open(csv_path, 'w', newline='', encoding='utf-8') as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        writer.writerows(segment_results)
 
 

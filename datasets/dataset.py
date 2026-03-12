@@ -156,7 +156,7 @@ class BaseDataset(Dataset):
             pad_label[:, 0] = 1
             slice_label = torch.cat([slice_label, pad_label], dim=0)
 
-        return item['song_name'], slice_piano, slice_label
+        return item['song_name'], start_frame, slice_piano, slice_label
 
 
 

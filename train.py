@@ -1,21 +1,24 @@
 from trainer.trainer import run_epoch, run_test_epoch
-import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 import numpy as np
 from models.model_zoo import Conv2DGRU
 from datasets.dataset import BaseDataset
-from utils import get_all_song_names, create_kfold_splits, plot_posteriorgram
+from utils import get_all_song_names, create_kfold_splits, plot_posteriorgram, save_test_csv, plot_confusion_matrix
 from torch.utils.data import DataLoader
 from pathlib import Path
 import torch
 import wandb
 import hydra
+import csv
 from omegaconf import OmegaConf
 from datetime import datetime
 from losses import FocalLoss
+import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
 
+_korean_font = fm.FontProperties(fname='/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc')
+plt.rcParams['font.family'] = _korean_font.get_name()
 OUTPUT_DIR = Path("/home/sangheon/Desktop/PansoriMIDIDetection/outputs")
-
 
 @hydra.main(config_path="./configs", config_name="config")
 def main(cfg):
@@ -88,10 +91,13 @@ def main(cfg):
                 f"Val loss {val_loss:.4f}  acc {val_acc:.3f}  f1 {val_f1['f1_macro']:.3f} "
                 f"[우조 {val_f1['f1_ujoh']:.3f} / 계면조 {val_f1['f1_gyemyeon']:.3f} / 아니리 {val_f1['f1_aniri']:.3f}]{marker}")
 
-        # Evaluate on test set with posteriorgram visualization
+        # Evaluate on test set
+
         model.load_state_dict(torch.load(save_path))
-        test_loss, test_acc, test_f1, song_data = run_test_epoch(
-            test_loader, model, criterion, device)
+        test_loss, test_acc, test_f1, song_data, segment_results = run_test_epoch(
+            test_loader, model, criterion, device,
+            fs=fs, window_size=int(window_size * fs))
+
         print(f"\nFold {fold_idx + 1} Test | acc {test_acc:.4f}  f1_macro {test_f1['f1_macro']:.4f} "
               f"[우조 {test_f1['f1_ujoh']:.4f} / 계면조 {test_f1['f1_gyemyeon']:.4f} / 아니리 {test_f1['f1_aniri']:.4f}]")
 
@@ -106,12 +112,25 @@ def main(cfg):
 
         wandb.log(log_dict)
 
-        # Save posteriorgram for each test song
+        # Save test results to CSV
         test_pg_dir = fold_out_dir / "test"
         test_pg_dir.mkdir(parents=True, exist_ok=True)
+        save_test_csv(segment_results, test_pg_dir / "test_results.csv")
+        plot_confusion_matrix(song_data, test_pg_dir / "confusion_matrix.png")
+
+        # Save posteriorgrams: per-segment then full song
         for sname, data in song_data.items():
+            song_dir = test_pg_dir / Path(sname).stem
+            song_dir.mkdir(exist_ok=True)
+
+            for seg in data['segments']:
+                seg_label = f"{seg['start_sec']:.0f}-{seg['end_sec']:.0f}s"
+                fig = plot_posteriorgram(f"{Path(sname).stem} [{seg_label}]", seg['gt'], seg['pred_probs'])
+                fig.savefig(song_dir / f"{Path(sname).stem}_{seg_label}.png", dpi=120, bbox_inches='tight')
+                plt.close(fig)
+
             fig = plot_posteriorgram(sname, data['gt'], data['pred_probs'])
-            fig.savefig(test_pg_dir / f"{Path(sname).stem}.png", dpi=120, bbox_inches='tight')
+            fig.savefig(song_dir / "full.png", dpi=120, bbox_inches='tight')
             plt.close(fig)
         run.finish()
 

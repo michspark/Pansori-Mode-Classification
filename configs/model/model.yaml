@@ -3,7 +3,7 @@ in_channels: 1
 num_layers: 4
 last_hidden_dim: 64
 use_gradual_size: true
-kernel_size: [3, 3]
+kernel_size: [3, 5]
 dilation: [1, 1]
 pool_size: [2, 1]
 cnn_dropout: 0.1
