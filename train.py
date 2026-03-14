@@ -55,7 +55,7 @@ def main(cfg):
         model = Conv2DGRU(cfg.model).to(device)
         optimizer = torch.optim.Adam(model.parameters(), lr=cfg.train.lr)
         #criterion = torch.nn.CrossEntropyLoss()
-        alpha_weights = torch.tensor([0.5, 3.0, 1.0, 1.5]).to(device)
+        alpha_weights = torch.tensor([0.5, 3.0, 1.0, 1.5, 2.0]).to(device)
         criterion = FocalLoss(alpha=alpha_weights, gamma=2, ignore_index=-100, reduction='mean')
 
         best_val_f1 = 0.0

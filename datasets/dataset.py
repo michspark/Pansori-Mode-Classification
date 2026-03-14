@@ -11,7 +11,8 @@ class BaseDataset(Dataset):
     label_map = {
         "우조": 1, "평조": 1, "경드름": 1, "설렁제": 1,
         "계면조": 2,
-        "아니리": 3, "창조": 3,
+        "아니리": 3,
+        "창조": 4
     }  # 0: no label
     def __init__(self, data_dir, label_json, song_list=None, fs=100, window_size=30.0, is_train=True):
         self.data_dir = Path(data_dir)
