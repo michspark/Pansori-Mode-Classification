@@ -22,9 +22,9 @@ def run_test_epoch(loader, model, criterion, device, fs=100, window_size=3000):
             total_loss += loss.item()
 
             pred_probs = torch.softmax(out, dim=-1)  # (1, T, C)
-            preds = out.detach().argmax(dim=-1).view(-1)
+            preds = out.detach().argmax(dim=-1).view(-1).cpu()
             all_preds.append(preds)
-            all_tgts.append(tgt.view(-1))
+            all_tgts.append(tgt.view(-1).cpu())
 
             name = song_name[0] if isinstance(song_name, (list, tuple)) else song_name
             if name not in song_data:
@@ -96,10 +96,10 @@ def run_epoch(loader, model, optimizer, criterion, device, train=True):
                 loss.backward()
                 optimizer.step()
 
-            preds = out.detach().argmax(dim=-1).view(-1)
+            preds = out.detach().argmax(dim=-1).view(-1).cpu()
             total_loss += loss.item()
             all_preds.append(preds)
-            all_tgts.append(tgt.view(-1))
+            all_tgts.append(tgt.view(-1).cpu())
 
             if not train:
                 pred_probs = torch.softmax(out, dim=-1)

@@ -33,7 +33,10 @@ def main(cfg):
     all_songs = get_all_song_names(midi_dir, label_path)
     folds = create_kfold_splits(all_songs, k=cfg.train.k_folds, seed=cfg.random_seed)
 
+    target_fold = cfg.train.get('fold', None)
     for fold_idx, fold in enumerate(folds):
+        if target_fold is not None and (fold_idx + 1) != int(target_fold):
+            continue
         run = wandb.init(
             project=cfg.project_name,
             name=f"fold{fold_idx + 1}_{T}",
@@ -133,6 +136,12 @@ def main(cfg):
             fig.savefig(song_dir / "full.png", dpi=120, bbox_inches='tight')
             plt.close(fig)
         run.finish()
+
+        del model, optimizer
+        del train_dataset, val_dataset, test_dataset
+        del train_loader, val_loader, test_loader
+        del song_data, segment_results
+        torch.cuda.empty_cache()
 
 if __name__ == '__main__':
     main()
