@@ -53,6 +53,7 @@ def run_test_epoch(loader, model, criterion, device, fs=100, window_size=3000):
                 'f1_ujoh': round(seg_f1['f1_ujoh'], 6),
                 'f1_gyemyeon': round(seg_f1['f1_gyemyeon'], 6),
                 'f1_aniri': round(seg_f1['f1_aniri'], 6),
+                'f1_changjo': round(seg_f1['f1_changjo'], 6),
                 'f1_macro': round(seg_f1['f1_macro'], 6),
             })
 

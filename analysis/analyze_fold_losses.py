@@ -12,7 +12,7 @@ if not csv_paths:
 
 DISPLAY_COLS = ["song_name", "time_range", "loss", "acc", "f1_macro"]
 TOP_N = 10
-OUTPUT_PATH = "/home/sangheon/Desktop/PansoriMIDIDetection/fold_loss_summary.csv"
+OUTPUT_PATH = "/home/sangheon/Desktop/PansoriMIDIDetection/analysis/fold_loss_summary.csv"
 
 rows = []
 for csv_path in csv_paths:
@@ -28,3 +28,5 @@ for csv_path in csv_paths:
 out = pd.DataFrame(rows, columns=["fold", "type", "rank"] + DISPLAY_COLS)
 out.to_csv(OUTPUT_PATH, index=False)
 print(f"Saved to {OUTPUT_PATH}")
+
+

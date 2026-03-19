@@ -4,7 +4,7 @@ from pathlib import Path
 
 AUDIO_DIR  = Path("/home/sangheon/Desktop/Pansori_Data/Audio")
 OUTPUT_DIR = Path("/home/sangheon/Desktop/PansoriMIDIDetection/outputs")
-SUMMARY    = Path("/home/sangheon/Desktop/PansoriMIDIDetection/fold_loss_summary.csv")
+SUMMARY    = Path("/home/sangheon/Desktop/PansoriMIDIDetection/analysis/fold_loss_summary.csv")
 
 df = pd.read_csv(SUMMARY)
 

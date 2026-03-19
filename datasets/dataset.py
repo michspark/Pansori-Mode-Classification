@@ -80,7 +80,7 @@ class BaseDataset(Dataset):
 
     def build_frame_label(self, original_length: float, result: list) -> torch.Tensor:
         num_frames = int(original_length * self.fs)
-        frame_label = torch.zeros(num_frames, 4)
+        frame_label = torch.zeros(num_frames, 5)
         frame_label[:, 0] = 1  # default: no label
         for ann in result:
             val = ann['value']
@@ -153,7 +153,7 @@ class BaseDataset(Dataset):
         if curr_w < self.window_size:
             pad_w = self.window_size - curr_w
             slice_piano = torch.nn.functional.pad(slice_piano, (0, pad_w), value=0)
-            pad_label = torch.zeros((pad_w, 4))
+            pad_label = torch.zeros((pad_w, 5))
             pad_label[:, 0] = 1
             slice_label = torch.cat([slice_label, pad_label], dim=0)
 

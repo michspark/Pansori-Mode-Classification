@@ -10,10 +10,12 @@ import torch
 import wandb
 import hydra
 import csv
+import gc
 from omegaconf import OmegaConf
 from datetime import datetime
 from losses import FocalLoss
 import matplotlib.pyplot as plt
+import ctypes
 import matplotlib.font_manager as fm
 
 _korean_font = fm.FontProperties(fname='/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc')
@@ -54,9 +56,14 @@ def main(cfg):
 
         model = Conv2DGRU(cfg.model).to(device)
         optimizer = torch.optim.Adam(model.parameters(), lr=cfg.train.lr)
-        #criterion = torch.nn.CrossEntropyLoss()
-        alpha_weights = torch.tensor([0.5, 3.0, 1.0, 1.5, 2.0]).to(device)
-        criterion = FocalLoss(alpha=alpha_weights, gamma=2, ignore_index=-100, reduction='mean')
+
+        loss_cfg = cfg.train.loss
+        if loss_cfg.name == 'FocalLoss':
+            alpha = torch.tensor(loss_cfg.weights).to(device) if loss_cfg.weights else 1
+            criterion = FocalLoss(alpha=alpha, gamma=loss_cfg.gamma,
+                                  ignore_index=loss_cfg.ignore_index, reduction='mean')
+        else:
+            criterion= torch.nn.CrossEntropyLoss(ignore_index=loss_cfg.ignore_index)
 
         best_val_f1 = 0.0
         save_path = f"best_model_fold{fold_idx + 1}.pt"
@@ -81,28 +88,41 @@ def main(cfg):
                 'train/f1_ujoh': train_f1['f1_ujoh'],
                 'train/f1_gyemyeon': train_f1['f1_gyemyeon'],
                 'train/f1_aniri': train_f1['f1_aniri'],
+                'train/f1_changjo': train_f1['f1_changjo'],
                 'val/loss': val_loss,
                 'val/acc': val_acc,
                 'val/f1_macro': val_f1['f1_macro'],
                 'val/f1_ujoh': val_f1['f1_ujoh'],
                 'val/f1_gyemyeon': val_f1['f1_gyemyeon'],
                 'val/f1_aniri': val_f1['f1_aniri'],
+                'val/f1_changjo': val_f1['f1_changjo'],
             }, step=epoch)
 
             print(f"Epoch {epoch:3d}/{cfg.train.num_epochs} | "
                 f"Train loss {train_loss:.4f}  acc {train_acc:.3f}  f1 {train_f1['f1_macro']:.3f} | "
                 f"Val loss {val_loss:.4f}  acc {val_acc:.3f}  f1 {val_f1['f1_macro']:.3f} "
-                f"[우조 {val_f1['f1_ujoh']:.3f} / 계면조 {val_f1['f1_gyemyeon']:.3f} / 아니리 {val_f1['f1_aniri']:.3f}]{marker}")
+                f"[우조 {val_f1['f1_ujoh']:.3f} / 계면조 {val_f1['f1_gyemyeon']:.3f} / 아니리 {val_f1['f1_aniri']:.3f} / 창조 {val_f1['f1_changjo']:.3f}]{marker}")
 
         # Evaluate on test set
-
-        model.load_state_dict(torch.load(save_path))
+        state_dict = torch.load(save_path, map_location='cpu')  # load to CPU first to avoid 2× GPU copy
+        model.load_state_dict(state_dict)
+        del state_dict
+        print(f"[Fold {fold_idx+1}] GPU before test: allocated={torch.cuda.memory_allocated()/1e6:.1f}MB reserved={torch.cuda.memory_reserved()/1e6:.1f}MB")
         test_loss, test_acc, test_f1, song_data, segment_results = run_test_epoch(
             test_loader, model, criterion, device,
             fs=fs, window_size=int(window_size * fs))
 
+        total_frames = sum(data['gt'].shape[0] for data in song_data.values())
+        total_seg_frames = sum(seg['gt'].shape[0] for data in song_data.values() for seg in data['segments'])
+        print(f"song_data full frames: {total_frames}, seg frames: {total_seg_frames}")
+        print(f"RAM estimate: {(total_frames + total_seg_frames) * 5 * 2 * 4 / 1e6:.1f} MB")  # gt + pred, float32
+
+        print(f"[Fold {fold_idx+1}] GPU after test:  allocated={torch.cuda.memory_allocated()/1e6:.1f}MB reserved={torch.cuda.memory_reserved()/1e6:.1f}MB")
         print(f"\nFold {fold_idx + 1} Test | acc {test_acc:.4f}  f1_macro {test_f1['f1_macro']:.4f} "
-              f"[우조 {test_f1['f1_ujoh']:.4f} / 계면조 {test_f1['f1_gyemyeon']:.4f} / 아니리 {test_f1['f1_aniri']:.4f}]")
+              f"[우조 {test_f1['f1_ujoh']:.4f} / 계면조 {test_f1['f1_gyemyeon']:.4f} / 아니리 {test_f1['f1_aniri']:.4f} / 창조 {test_f1['f1_changjo']:.4f}]")
+
+        print(f"총 곡 수: {len(song_data)}")
+        print(f"총 segment 수: {sum(len(d['segments']) for d in song_data.values())}")
 
         log_dict = {
             'test/loss': test_loss,
@@ -111,37 +131,59 @@ def main(cfg):
             'test/f1_ujoh': test_f1['f1_ujoh'],
             'test/f1_gyemyeon': test_f1['f1_gyemyeon'],
             'test/f1_aniri': test_f1['f1_aniri'],
+            'test/f1_changjo': test_f1['f1_changjo'],
         }
 
         wandb.log(log_dict)
 
         # Save test results to CSV
-        test_pg_dir = fold_out_dir / "test"
-        test_pg_dir.mkdir(parents=True, exist_ok=True)
-        save_test_csv(segment_results, test_pg_dir / "test_results.csv")
-        plot_confusion_matrix(song_data, test_pg_dir / "confusion_matrix.png")
+        fold_out_dir.mkdir(parents=True, exist_ok=True)
+        save_test_csv(segment_results, fold_out_dir / "test_results.csv")
+        cm_dir = OUTPUT_DIR / "confusion_matrix"
+        cm_dir.mkdir(parents=True, exist_ok=True)
+        cm_filename = f"fold{fold_idx + 1}_{T}_confusionmatrix.png"
+        plot_confusion_matrix(song_data, cm_dir / cm_filename)
 
         # Save posteriorgrams: per-segment then full song
         for sname, data in song_data.items():
-            song_dir = test_pg_dir / Path(sname).stem
-            song_dir.mkdir(exist_ok=True)
+            stem = Path(sname).stem
 
             for seg in data['segments']:
                 seg_label = f"{seg['start_sec']:.0f}-{seg['end_sec']:.0f}s"
-                fig = plot_posteriorgram(f"{Path(sname).stem} [{seg_label}]", seg['gt'], seg['pred_probs'])
-                fig.savefig(song_dir / f"{Path(sname).stem}_{seg_label}.png", dpi=120, bbox_inches='tight')
+                fig = plot_posteriorgram(f"{stem} [{seg_label}]", seg['gt'], seg['pred_probs'])
+                fig.savefig(fold_out_dir / f"{stem}_{seg_label}.png", dpi=120, bbox_inches='tight')
+                fig.clf()
                 plt.close(fig)
 
             fig = plot_posteriorgram(sname, data['gt'], data['pred_probs'])
-            fig.savefig(song_dir / "full.png", dpi=120, bbox_inches='tight')
+            fig.savefig(fold_out_dir / f"{stem}_full.png", dpi=120, bbox_inches='tight')
+            fig.clf()
             plt.close(fig)
+
+            data['segments'].clear()
+            del data['segments'], data['gt'], data['pred_probs']
+
+        import matplotlib._pylab_helpers as _helpers
+        print(f"남은 figure 수: {len(_helpers.Gcf.get_all_fig_managers())}")
+        plt.close('all')
+        print(f"close 후 figure 수: {len(_helpers.Gcf.get_all_fig_managers())}")
+
+        gc.collect()
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
         run.finish()
 
-        del model, optimizer
+        optimizer.zero_grad(set_to_none=True)  # free .grad tensors from last batch
+        model.cpu()                             # move weights off GPU before del
+        del model, optimizer, criterion
         del train_dataset, val_dataset, test_dataset
         del train_loader, val_loader, test_loader
         del song_data, segment_results
+        torch.cuda.synchronize()               # wait for all async CUDA ops to finish
+        gc.collect()
         torch.cuda.empty_cache()
+        print(f"[Fold {fold_idx+1}] GPU after cleanup: "
+              f"allocated={torch.cuda.memory_allocated()/1e6:.1f}MB "
+              f"reserved={torch.cuda.memory_reserved()/1e6:.1f}MB")
 
 if __name__ == '__main__':
     main()

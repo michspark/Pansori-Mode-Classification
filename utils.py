@@ -65,15 +65,16 @@ def get_all_song_names(data_dir, label_json):
 
 def plot_posteriorgram(song_name, gt, pred_probs):
     """
-    gt         : (T, 3) numpy array, one-hot ground truth
-    pred_probs : (T, 3) numpy array, softmax probabilities
+    gt         : (T, 5) numpy array, one-hot ground truth
+    pred_probs : (T, 5) numpy array, softmax probabilities
     Returns a matplotlib Figure.
     """
-    CLASS_NAMES = ['no label', 'Ujo', 'GMjo', 'ANR']
+    CLASS_NAMES = ['no label', 'Ujo', 'GMjo', 'ANR', 'CJO']
     _CMAP = plt.cm.get_cmap('tab10')
-    _CLASS_COLORS = [_CMAP(7), _CMAP(0), _CMAP(3), _CMAP(2)]
+    _CLASS_COLORS = [_CMAP(7), _CMAP(0), _CMAP(3), _CMAP(2), _CMAP(4)]
 
     T = gt.shape[0]
+    n = len(CLASS_NAMES)
 
     fig, axes = plt.subplots(2, 1, figsize=(16, 5), sharex=True,
                              constrained_layout=True)
@@ -81,21 +82,21 @@ def plot_posteriorgram(song_name, gt, pred_probs):
 
     gt_labels = np.argmax(gt, axis=1)
     import matplotlib.colors as mcolors
-    gt_cmap = mcolors.ListedColormap([_CLASS_COLORS[i] for i in range(4)])
+    gt_cmap = mcolors.ListedColormap([_CLASS_COLORS[i] for i in range(n)])
     axes[0].imshow(gt_labels[np.newaxis, :], aspect='auto', origin='lower',
-                   cmap=gt_cmap, vmin=-0.5, vmax=3.5, interpolation='nearest',
+                   cmap=gt_cmap, vmin=-0.5, vmax=n - 0.5, interpolation='nearest',
                    extent=[0, T, -0.5, 0.5])
     axes[0].set_yticks([0])
     axes[0].set_yticklabels(['class'])
     axes[0].set_title('Ground Truth')
 
-    legend_handles = [Patch(color=_CLASS_COLORS[i], label=CLASS_NAMES[i]) for i in range(4)]
+    legend_handles = [Patch(color=_CLASS_COLORS[i], label=CLASS_NAMES[i]) for i in range(n)]
     axes[0].legend(handles=legend_handles, loc='upper right', fontsize=8, framealpha=0.7)
 
     im = axes[1].imshow(np.flipud(pred_probs.T), aspect='auto', origin='lower',
                         vmin=0, vmax=1, cmap='gray_r', interpolation='nearest',
-                        extent=[0, T, -0.5, 3.5])
-    axes[1].set_yticks([0, 1, 2, 3])
+                        extent=[0, T, -0.5, n - 0.5])
+    axes[1].set_yticks(list(range(n)))
     axes[1].set_yticklabels(CLASS_NAMES[::-1])
     axes[1].set_title('Predicted Posteriorgram')
 
@@ -106,7 +107,7 @@ def plot_posteriorgram(song_name, gt, pred_probs):
 
 def plot_confusion_matrix(song_data, save_path):
     """Build and save a confusion matrix from all songs in song_data."""
-    CLASS_NAMES = ['no label', 'Ujo', 'GMjo', 'ANR']
+    CLASS_NAMES = ['no label', 'Ujo', 'GMjo', 'ANR', 'CJO']
     all_gt, all_pred = [], []
     for data in song_data.values():
         all_gt.append(np.argmax(data['gt'], axis=1))
@@ -137,6 +138,7 @@ def plot_confusion_matrix(song_data, save_path):
                     ha='center', va='center', fontsize=8,
                     color='white' if cm_norm[i, j] > 0.6 else 'black')
     fig.savefig(save_path, dpi=120, bbox_inches='tight')
+    fig.clf()
     plt.close(fig)
 
 
@@ -145,7 +147,7 @@ def save_test_csv(segment_results, csv_path):
     if not segment_results:
         return
     fieldnames = ['song_name', 'time_range', 'start_sec', 'end_sec',
-                  'loss', 'acc', 'f1_ujoh', 'f1_gyemyeon', 'f1_aniri', 'f1_macro']
+                  'loss', 'acc', 'f1_ujoh', 'f1_gyemyeon', 'f1_aniri', 'f1_changjo', 'f1_macro']
     with open(csv_path, 'w', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
