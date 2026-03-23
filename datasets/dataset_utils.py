@@ -13,4 +13,3 @@ class PianoRollGenerator:
         if self.roll is None:
             self.roll = self.midi.get_piano_roll(fs=self.fs)
         return self.roll
-
