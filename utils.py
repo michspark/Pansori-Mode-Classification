@@ -7,6 +7,52 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
 import csv
 
+def load_folds_from_files(fold_dir, midi_dir, label_json, k=10):
+    """
+    fold_dir 의 fold_01.txt ~ fold_10.txt 를 읽어
+    각 fold에 해당하는 MIDI 파일명 리스트로 변환하고
+    train/val/test 분할 딕셔너리 리스트를 반환한다.
+    """
+    import re
+
+    fold_dir = Path(fold_dir)
+    midi_dir = Path(midi_dir)
+
+    with open(label_json, 'r', encoding='utf-8') as f:
+        raw = json.load(f)
+
+    def _midi_key(name):
+        n = name.replace('_vocal.mid', '')
+        n = re.sub(r'^[0-9a-f]+-\d+-', '', n)
+        return n
+
+    key_to_midi = {}
+    for item in raw:
+        fu = unicodedata.normalize('NFC', item['file_upload'])
+        midi_name = fu.rsplit('.', 1)[0] + '_vocal.mid'
+        if (midi_dir / midi_name).exists():
+            key_to_midi[_midi_key(midi_name)] = midi_name
+
+    chunks = []
+    for i in range(1, k + 1):
+        fold_file = fold_dir / f'fold_{i:02d}.txt'
+        keys = [line.strip() for line in fold_file.read_text(encoding='utf-8').splitlines() if line.strip()]
+        midi_names = [key_to_midi[key] for key in keys if key in key_to_midi]
+        chunks.append(midi_names)
+        print(f"  Fold {i:2d}: {len(keys)} keys -> {len(midi_names)} MIDI files")
+
+    folds = []
+    for i in range(k):
+        test_songs = chunks[i]
+        val_songs = chunks[(i + 1) % k]
+        train_songs = []
+        for j in range(k):
+            if j != i and j != (i + 1) % k:
+                train_songs.extend(chunks[j])
+        folds.append({'train': train_songs, 'val': val_songs, 'test': test_songs})
+    return folds
+
+
 def create_kfold_splits(song_list, k=10, seed=42):
     random.seed(seed)
     np.random.seed(seed)

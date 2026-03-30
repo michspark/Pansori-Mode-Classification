@@ -14,6 +14,7 @@ class BaseDataset(Dataset):
         "아니리": 3,
         "창조": 4
     }  # 0: no label
+    
     def __init__(self, data_dir, label_json, song_list=None, fs=100, window_size=30.0, is_train=True):
         self.data_dir = Path(data_dir)
         self.song_list = set(song_list) if song_list is not None else None
@@ -65,19 +66,6 @@ class BaseDataset(Dataset):
         if not self.is_train:
             self.val_segments = self.prepare_val_segments()
 
-    # def build_frame_label(self, original_length: float, result: list) -> torch.Tensor:
-    #    num_frames = int(original_length * self.fs)
-    #   frame_label = torch.zeros(num_frames, 3)
-    #    for ann in result:
-    #        val = ann['value']
-    #        s = int(val['start'] * self.fs)
-    #        e = min(int(val['end'] * self.fs), num_frames)
-    #        name = val['labels'][0]
-    #        cls_idx = self.label_map.get(name, self.label_map['others'])
-    #        frame_label[s:e, :] = 0
-    #        frame_label[s:e, cls_idx] = 1
-    #    return frame_label
-
     def build_frame_label(self, original_length: float, result: list) -> torch.Tensor:
         num_frames = int(original_length * self.fs)
         frame_label = torch.zeros(num_frames, 5)
@@ -94,10 +82,38 @@ class BaseDataset(Dataset):
         return frame_label
 
     def prepare_val_segments(self):
+        """Creates non-overlapping segments, snapping boundaries to silence
+        so that notes active at a window boundary are not cut mid-note.
+        Searches within ±1 second of the target boundary for a silent frame.
+        Falls back to the original boundary if no silence is found.
+        """
         segments = []
+        tolerance = self.fs  # 1 second in frames
         for idx, item in enumerate(self.memory_cache):
-            for start in range(0, item['total_frames'], self.window_size):
+            piano_roll = item['piano_roll']  # [128, T]
+            total_frames = item['total_frames']
+            start = 0
+            while start < total_frames:
                 segments.append((idx, start))
+                target_end = start + self.window_size
+                if target_end >= total_frames:
+                    break
+                if piano_roll[:, target_end].any():
+                    # Search forward first (note ends soon after boundary)
+                    snapped = None
+                    for f in range(target_end + 1, min(total_frames, target_end + tolerance)):
+                        if not piano_roll[:, f].any():
+                            snapped = f
+                            break
+                    # If not found forward, search backward
+                    if snapped is None:
+                        for f in range(target_end - 1, max(start, target_end - tolerance) - 1, -1):
+                            if not piano_roll[:, f].any():
+                                snapped = f + 1
+                                break
+                    start = snapped if snapped is not None else target_end
+                else:
+                    start = target_end
         return segments
 
     def pitch_shift(self, piano_roll, shift_range=(-3, 3)):
@@ -156,6 +172,9 @@ class BaseDataset(Dataset):
             pad_label = torch.zeros((pad_w, 5))
             pad_label[:, 0] = 1
             slice_label = torch.cat([slice_label, pad_label], dim=0)
+        elif curr_w > self.window_size:
+            slice_piano = slice_piano[:, :self.window_size]
+            slice_label = slice_label[:self.window_size, :]
 
         return item['song_name'], start_frame, slice_piano, slice_label
 

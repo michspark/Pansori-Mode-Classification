@@ -1,6 +1,7 @@
 dir:
   midi_dir: /home/sangheon/Desktop/Pansori_Data/rosvot_midi
   label_path: /home/sangheon/Desktop/Pansori_Data/labels_2.json
+  fold_dir: /home/sangheon/Desktop/pansori_folds  # shared 10-fold split files
 
 fs: 10
 window_size: 30

@@ -3,7 +3,7 @@ import matplotlib.patches as mpatches
 import numpy as np
 from models.model_zoo import Conv2DGRU
 from datasets.dataset import BaseDataset
-from utils import get_all_song_names, create_kfold_splits, plot_posteriorgram, save_test_csv, plot_confusion_matrix
+from utils import get_all_song_names, create_kfold_splits, load_folds_from_files, plot_posteriorgram, save_test_csv, plot_confusion_matrix
 from torch.utils.data import DataLoader
 from pathlib import Path
 import torch
@@ -32,8 +32,13 @@ def main(cfg):
 
     T = datetime.now().strftime('%m%d_%H%M%S')
 
-    all_songs = get_all_song_names(midi_dir, label_path)
-    folds = create_kfold_splits(all_songs, k=cfg.train.k_folds, seed=cfg.random_seed)
+    fold_dir = cfg.data.dir.get('fold_dir', None)
+    if fold_dir:
+        print(f"[INFO] Shared fold files 사용: {fold_dir}")
+        folds = load_folds_from_files(fold_dir, midi_dir, label_path, k=cfg.train.k_folds)
+    else:
+        all_songs = get_all_song_names(midi_dir, label_path)
+        folds = create_kfold_splits(all_songs, k=cfg.train.k_folds, seed=cfg.random_seed)
 
     target_fold = cfg.train.get('fold', None)
     for fold_idx, fold in enumerate(folds):
