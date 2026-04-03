@@ -14,7 +14,7 @@ class BaseDataset(Dataset):
         "아니리": 3,
         "창조": 4
     }  # 0: no label
-    
+
     def __init__(self, data_dir, label_json, song_list=None, fs=100, window_size=30.0, is_train=True):
         self.data_dir = Path(data_dir)
         self.song_list = set(song_list) if song_list is not None else None

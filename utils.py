@@ -151,8 +151,10 @@ def plot_posteriorgram(song_name, gt, pred_probs):
 
     return fig
 
-def plot_confusion_matrix(song_data, save_path):
-    """Build and save a confusion matrix from all songs in song_data."""
+def plot_confusion_matrix(song_data):
+    """Build a confusion matrix from all songs in song_data and return as numpy array."""
+    from io import BytesIO
+    from PIL import Image
     CLASS_NAMES = ['no label', 'Ujo', 'GMjo', 'ANR', 'CJO']
     all_gt, all_pred = [], []
     for data in song_data.values():
@@ -183,9 +185,13 @@ def plot_confusion_matrix(song_data, save_path):
             ax.text(j, i, f"{cm[i,j]}\n({cm_norm[i,j]:.2f})",
                     ha='center', va='center', fontsize=8,
                     color='white' if cm_norm[i, j] > 0.6 else 'black')
-    fig.savefig(save_path, dpi=120, bbox_inches='tight')
-    fig.clf()
+    buf = BytesIO()
+    fig.savefig(buf, format='png', dpi=120, bbox_inches='tight')
+    buf.seek(0)
+    image_np = np.array(Image.open(buf).convert('RGB'))
+    buf.close()
     plt.close(fig)
+    return image_np
 
 
 def save_test_csv(segment_results, csv_path):

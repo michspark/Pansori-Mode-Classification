@@ -1,7 +1,12 @@
 dir:
   midi_dir: /home/sangheon/Desktop/Pansori_Data/rosvot_midi
   label_path: /home/sangheon/Desktop/Pansori_Data/labels_2.json
-  fold_dir: /home/sangheon/Desktop/pansori_folds  # shared 10-fold split files
+  random_fold_dir: /home/sangheon/Desktop/Pansori_Data/pansori_random_fold
+  song_fold_dir: /home/sangheon/Desktop/Pansori_Data/pansori_song_stratified_fold
+
+# "stratified" uses pre-existing fold files from fold_dir
+# "random"     generates k-fold splits on the fly using random_seed
+split: stratified
 
 fs: 10
 window_size: 30

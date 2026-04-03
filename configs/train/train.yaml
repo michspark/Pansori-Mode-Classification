@@ -1,5 +1,11 @@
-batch_size: 8
-num_epochs: 100
+batch_size: 16
+train_mode: epoch   # "iteration" or "epoch"
+num_iterations: 10000   # used when train_mode=iteration
+num_epoch: 100         # used when train_mode=epoch
+epoch_eval_interval: 1
+iter_eval_interval: 200
+save_interval: 1000     # steps (iteration mode) or epochs (epoch mode)
+early_stopping_patience: 20
 lr: 1e-4
 k_folds: 10
 
@@ -8,7 +14,7 @@ k_folds: 10
 loss:
   name: FocalLoss # FocalLoss or CrossEntropyLoss
   gamma: 2.0
-  ignore_index: -100
+  ignore_index: 0
   weights: [0.3, 3.0, 1.0, 1.5, 3.0]
 
 fold: null  # null = run all folds. Set to a fold number (e.g. 8) to run only that fold.

@@ -19,7 +19,9 @@ class FocalLoss(nn.Module):
             alpha_t = self.alpha
         focal_loss = alpha_t * ((1 - pt) ** self.gamma) * log_pt
 
-        if self.reduction == 'mean': return focal_loss.mean()
+        if self.reduction == 'mean':
+            mask = log_pt != 0
+            return focal_loss[mask].mean() if mask.any() else focal_loss.sum()
         elif self.reduction == 'sum': return focal_loss.sum()
         else: return focal_loss
 
