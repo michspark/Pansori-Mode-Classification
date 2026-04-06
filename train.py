@@ -1,6 +1,6 @@
 from trainer.trainer import Trainer
 from models.model_zoo import Conv2DGRU
-from utils import get_all_song_names, create_kfold_splits, load_folds_from_files
+from utils import get_all_song_names, create_kfold_splits, load_folds_from_files, load_stratified_folds_from_genre_files, load_half_stratified_folds
 from losses import FocalLoss
 from datetime import datetime
 import matplotlib.pyplot as plt
@@ -21,10 +21,14 @@ def main(cfg):
     T = datetime.now().strftime('%m%d_%H%M%S')
 
     if cfg.data.split == 'stratified':
-        folds = load_folds_from_files(cfg.data.dir.fold_dir, midi_dir, label_path, k=cfg.train.k_folds)
+        folds = load_stratified_folds_from_genre_files(
+            cfg.data.dir.stratified_fold_dir, midi_dir, label_path,
+            k=cfg.train.k_folds, seed=cfg.random_seed)
+    elif cfg.data.split == 'stratified_half':
+        folds = load_half_stratified_folds(
+            cfg.data.dir.stratified_half_fold_dir, midi_dir, label_path)
     else:
-        all_songs = get_all_song_names(midi_dir, label_path)
-        folds = create_kfold_splits(all_songs, k=cfg.train.k_folds, seed=cfg.random_seed)
+        folds = load_folds_from_files(cfg.data.dir.random_fold_dir, midi_dir, label_path, k=cfg.train.k_folds)
 
     target_fold = cfg.train.get('fold', None)
     for fold_idx, fold in enumerate(folds):

@@ -1,3 +1,4 @@
+import json
 import torch
 import wandb
 import matplotlib.pyplot as plt
@@ -185,9 +186,31 @@ class Trainer:
             reinit=True,
         )
 
+        self._log_split(fold)
         self._fit(train_loader, val_loader)
         self._evaluate(test_loader)
         run.finish()
+
+    def _log_split(self, fold):
+        self.fold_out_dir.mkdir(parents=True, exist_ok=True)
+        split_info = fold.get('split_info', None)
+
+        # Write split to file
+        split_path = self.fold_out_dir / "split_info.json"
+        payload = {'train': fold['train'], 'val': fold['val'], 'test': fold['test']}
+        with open(split_path, 'w', encoding='utf-8') as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+
+        # Log to wandb as a Table
+        rows = ([[s, 'train'] for s in fold['train']] +
+                [[s, 'val']   for s in fold['val']] +
+                [[s, 'test']  for s in fold['test']])
+
+        table = wandb.Table(columns=['song', 'split'], data=rows)
+        wandb.log({'split/song_table': table,
+                   'split/n_train': len(fold['train']),
+                   'split/n_val':   len(fold['val']),
+                   'split/n_test':  len(fold['test'])})
 
     def _fit(self, train_loader, val_loader):
         train_mode = self.cfg.train.get('train_mode', 'iteration')

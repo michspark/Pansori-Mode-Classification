@@ -2,11 +2,13 @@ dir:
   midi_dir: /home/sangheon/Desktop/Pansori_Data/rosvot_midi
   label_path: /home/sangheon/Desktop/Pansori_Data/labels_2.json
   random_fold_dir: /home/sangheon/Desktop/Pansori_Data/pansori_random_fold
-  song_fold_dir: /home/sangheon/Desktop/Pansori_Data/pansori_song_stratified_fold
+  stratified_fold_dir: /home/sangheon/Desktop/Pansori_Data/pansori_stratified_folds
+  stratified_half_fold_dir: /home/sangheon/Desktop/Pansori_Data/pansori_stratified_folds_half
 
-# "stratified" uses pre-existing fold files from fold_dir
-# "random"     generates k-fold splits on the fly using random_seed
-split: stratified
+# "stratified" uses genre files (ch/sh/jb/hb/sg.txt) for stratified k-fold splits
+# "stratified_half" uses the same genre files but with half of the data for each genre (ch/sh/jb/hb/sg_half.txt)
+# "random"     uses pre-existing fold_01.txt ~ fold_10.txt from random_fold_dir
+split: stratified_half
 
 fs: 10
 window_size: 30
