@@ -4,7 +4,7 @@ hydra:
 
 # Data sources
 data:
-  data_dir: "/home/sangheon/Desktop/Pansori_Data/audio_original"
+  data_dir: "/home/sangheon/Desktop/Pansori_Data/Audio_Original"
   label_dir: "/home/sangheon/Desktop/PansoriModeChangeDetection/data/Label"
 
 # Dataset configuration
