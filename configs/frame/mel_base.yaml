@@ -4,7 +4,7 @@ hydra:
 
 # Data sources
 data:
-  data_dir: "/home/sangheon/Desktop/Pansori_Data/Audio"
+  data_dir: "/home/sangheon/Desktop/Pansori_Data/audio_original"
   label_dir: "/home/sangheon/Desktop/PansoriModeChangeDetection/data/Label"
 
 # Dataset configuration
@@ -59,7 +59,9 @@ train:
   save_interval: 1000
   early_stopping_patience: 10
   random_seed: 42
-  selection: StratifyHalf   # SharedFold | KFold | Stratify | StratifyHalf | Artist | RandomSplit
+  selection: SharedFold   # SharedFold | KFold | Stratify | StratifyHalf | Artist | RandomSplit |
+  # Random | Artist | Song
+
   shared_fold_dir: "/home/sangheon/Desktop/Pansori_Data/pansori_random_fold" # shared 10-fold split files
   stratified_fold_dir: "/home/sangheon/Desktop/Pansori_Data/pansori_stratified_folds"
   stratified_half_fold_dir: "/home/sangheon/Desktop/Pansori_Data/pansori_stratified_folds_half"

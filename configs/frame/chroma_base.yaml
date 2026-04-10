@@ -1,0 +1,84 @@
+hydra:
+  run:
+    dir: .
+
+# Data sources
+data:
+  data_dir: "/home/sangheon/Desktop/Pansori_Data/Audio"
+  label_dir: "/home/sangheon/Desktop/PansoriModeChangeDetection/data/Label"
+
+# Dataset configuration
+dataset:
+  name: "ChromaFrameDataset"
+  params:
+    num_classes: 5
+    sr: 16000
+    channels: 'mono'
+    window: 30
+    n_fft: 2048
+    hop_length: 512
+    n_chroma: 12
+    aug: True
+
+# Model
+model:
+  name: "Conv2DGRU"
+  params:
+    num_layers: 3
+    in_channels: 1
+    num_bins: ${dataset.params.n_chroma}
+
+    last_hidden_dim: 64
+    use_gradual_size: False
+
+    kernel_size: 3
+    pool_size: (2,1)
+    dilation: (1,2)
+    cnn_dropout: 0
+
+    num_gru: 1
+    hidden_dim: 64
+    dropout: 0.3
+    num_classes: 5
+
+# Loss params
+loss:
+  name: FocalLoss # If alpha=1 gamma=0: FocalLoss -> CrossEntropyLoss
+  params:
+    alpha: 1
+    gamma: 0.0
+    ignore_index: 0
+
+# Training parameters
+train:
+  trainer: "FrameTrainer"
+  lr: 5e-4
+  batch_size: 32
+  num_iterations: 10000
+  eval_interval: 200
+  save_interval: 1000
+  early_stopping_patience: 10
+  random_seed: 42
+  selection: SharedFold   # SharedFold | KFold | Stratify | StratifyHalf | Artist | RandomSplit |
+  # Random | Artist | Song
+
+  shared_fold_dir: "/home/sangheon/Desktop/Pansori_Data/pansori_random_fold" # shared 10-fold split files
+  stratified_fold_dir: "/home/sangheon/Desktop/Pansori_Data/pansori_stratified_folds"
+  stratified_half_fold_dir: "/home/sangheon/Desktop/Pansori_Data/pansori_stratified_folds_half"
+  k_folds: 10
+  target_folds: [1,2]  # e.g. [1] or [1,2,3] to run only specific folds; null = run all
+
+# Cross-validation parameters
+kfold:
+  n_splits: 10
+  shuffle: True
+  random_state: ${train.random_seed}
+
+stratify: "/home/sangheon/Desktop/PansoriModeChangeDetection/data/Stratify/stratify.csv"
+
+filter:
+  sigma: 5
+
+# Directory paths
+dir:
+  save_dir: "weights/frame"
