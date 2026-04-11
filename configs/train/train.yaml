@@ -1,12 +1,17 @@
 batch_size: 16
 train_mode: epoch   # "iteration" or "epoch"
 num_iterations: 10000   # used when train_mode=iteration
-num_epoch: 100         # used when train_mode=epoch
+num_epoch: 150         # used when train_mode=epoch
 epoch_eval_interval: 1
 iter_eval_interval: 200
 save_interval: 1000     # steps (iteration mode) or epochs (epoch mode)
-early_stopping_patience: 20
 lr: 1e-4
+
+scheduler:
+  name: ReduceLROnPlateau  # ReduceLROnPlateau | CosineAnnealingLR | null
+  factor: 0.5
+  patience: 10
+  min_lr: 1e-6
 k_folds: 10
 
 # Loss params

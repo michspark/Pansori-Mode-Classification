@@ -1,6 +1,6 @@
-from trainer.trainer import Trainer
+from trainer.trainer import Trainer, load_version_test_midi_names, log_version_test_summary
 from models.model_zoo import Conv2DGRU
-from utils import get_all_song_names, create_kfold_splits, load_folds_from_files, load_stratified_folds_from_genre_files, load_half_stratified_folds
+from utils import get_all_song_names, create_kfold_splits, load_folds_from_files, load_song_stratified_folds, load_version_split
 from losses import FocalLoss
 from datetime import datetime
 import matplotlib.pyplot as plt
@@ -20,15 +20,21 @@ def main(cfg):
 
     T = datetime.now().strftime('%m%d_%H%M%S')
 
-    if cfg.data.split == 'stratified':
-        folds = load_stratified_folds_from_genre_files(
-            cfg.data.dir.stratified_fold_dir, midi_dir, label_path,
-            k=cfg.train.k_folds, seed=cfg.random_seed)
-    elif cfg.data.split == 'stratified_half':
-        folds = load_half_stratified_folds(
-            cfg.data.dir.stratified_half_fold_dir, midi_dir, label_path)
+    # Data Split
+    if cfg.data.split == 'song_stratified':
+        folds = load_song_stratified_folds(
+            cfg.data.dir.song_stratified_dir, midi_dir, label_path)
+    elif cfg.data.split == 'version':
+        folds = load_version_split(
+            cfg.data.dir.version_split_dir, midi_dir, label_path)
     else:
         folds = load_folds_from_files(cfg.data.dir.random_fold_dir, midi_dir, label_path, k=cfg.train.k_folds)
+
+    # Version test tracking — only active for song_stratified
+    vt_midi_names          = load_version_test_midi_names(cfg) if cfg.data.split == 'song_stratified' else set()
+    all_vt_song_data       = {}
+    all_vt_segment_results = []
+    all_vt_png_paths       = []
 
     target_fold = cfg.train.get('fold', None)
     for fold_idx, fold in enumerate(folds):
@@ -47,7 +53,16 @@ def main(cfg):
             criterion = torch.nn.CrossEntropyLoss(ignore_index=loss_cfg.ignore_index)
 
         trainer = Trainer(model, optimizer, criterion, device, cfg, fold_idx, T)
+        trainer._vt_midi_names = vt_midi_names
         trainer.run(fold)
+
+        all_vt_song_data.update(getattr(trainer, 'vt_song_data', {}))
+        all_vt_segment_results.extend(getattr(trainer, 'vt_segment_results', []))
+        all_vt_png_paths.extend(getattr(trainer, 'vt_png_paths', []))
+
+    # Version test summary after all folds
+    if all_vt_song_data:
+        log_version_test_summary(all_vt_song_data, all_vt_segment_results, all_vt_png_paths, cfg, T)
 
 if __name__ == '__main__':
     main()

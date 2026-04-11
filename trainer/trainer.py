@@ -1,4 +1,5 @@
 import json
+import shutil
 import torch
 import wandb
 import matplotlib.pyplot as plt
@@ -107,7 +108,9 @@ def run_test_epoch(loader, model, criterion, device, fs=100, window_size=3000):
                 'pred_probs': pred_probs[0].cpu().numpy(),
                 'start_sec': seg_start_sec,
                 'end_sec': seg_end_sec,
+                'loss': loss.item(),
             })
+            
             seg_f1 = masked_f1(preds.cpu(), tgt.view(-1).cpu())
             segment_results.append({
                 'song_name': name,
@@ -164,6 +167,28 @@ class Trainer:
         self.T = T
         self.save_path = f"best_model_fold{fold_idx + 1}.pt"
         self.fold_out_dir = OUTPUT_DIR / f"fold{fold_idx + 1}_{T}"
+        self.scheduler = self._build_scheduler()
+
+    def _build_scheduler(self):
+        sched_cfg = self.cfg.train.get('scheduler', None)
+        if not sched_cfg or sched_cfg.get('name', None) is None:
+            return None
+        name = sched_cfg['name']
+        if name == 'ReduceLROnPlateau':
+            return torch.optim.lr_scheduler.ReduceLROnPlateau(
+                self.optimizer,
+                mode='max',
+                factor=sched_cfg.get('factor', 0.5),
+                patience=sched_cfg.get('patience', 10),
+                min_lr=sched_cfg.get('min_lr', 1e-6),
+            )
+        if name == 'CosineAnnealingLR':
+            return torch.optim.lr_scheduler.CosineAnnealingLR(
+                self.optimizer,
+                T_max=sched_cfg.get('T_max', self.cfg.train.get('num_epoch', self.cfg.train.get('num_iterations', 100))),
+                eta_min=sched_cfg.get('min_lr', 1e-6),
+            )
+        raise ValueError(f"Unknown scheduler: {name}")
 
     def run(self, fold):
         fs = self.cfg.data.fs
@@ -174,6 +199,9 @@ class Trainer:
         train_dataset = BaseDataset(midi_dir, label_path, song_list=fold['train'], fs=fs, window_size=window_size, is_train=True)
         val_dataset   = BaseDataset(midi_dir, label_path, song_list=fold['val'],   fs=fs, window_size=window_size, is_train=False)
         test_dataset  = BaseDataset(midi_dir, label_path, song_list=fold['test'],  fs=fs, window_size=window_size, is_train=False)
+
+        # Keep train song list for hard-sample mining after training
+        self._train_song_list = fold['train']
 
         train_loader = DataLoader(train_dataset, batch_size=self.cfg.train.batch_size, shuffle=True)
         val_loader   = DataLoader(val_dataset,   batch_size=1, shuffle=False)
@@ -188,8 +216,52 @@ class Trainer:
 
         self._log_split(fold)
         self._fit(train_loader, val_loader)
-        self._evaluate(test_loader)
+        self._evaluate(test_loader)   # loads best checkpoint
+        self._save_hard_train_segments()
         run.finish()
+
+    def _save_hard_train_segments(self, top_n=30):
+        """Run best-model (already loaded) inference on train set; save top-N highest-loss segments."""
+        song_list = getattr(self, '_train_song_list', [])
+        if not song_list:
+            return
+        print(f"  Hard-train-segment analysis ({len(song_list)} train songs)...")
+
+        fs          = self.cfg.data.fs
+        window_size = self.cfg.data.window_size
+        midi_dir    = self.cfg.data.dir.midi_dir
+        label_path  = self.cfg.data.dir.label_path
+
+        train_eval_ds     = BaseDataset(midi_dir, label_path, song_list=song_list,
+                                        fs=fs, window_size=window_size, is_train=False)
+        train_eval_loader = DataLoader(train_eval_ds, batch_size=1, shuffle=False)
+
+        _, _, _, train_song_data, train_seg_results = run_test_epoch(
+            train_eval_loader, self.model, self.criterion, self.device,
+            fs=fs, window_size=int(window_size * fs))
+
+        hard_dir = self.fold_out_dir / 'hard_train_segments'
+        hard_dir.mkdir(parents=True, exist_ok=True)
+
+        # Top-N by loss → CSV
+        top = sorted(train_seg_results, key=lambda r: r['loss'], reverse=True)[:top_n]
+        save_test_csv(top, hard_dir / f'hard_train_top{top_n}.csv')
+
+        # Posteriorgrams only for the top-N segments
+        top_keys = {(r['song_name'], r['start_sec']) for r in top}
+        for sname, data in train_song_data.items():
+            for seg in data.get('segments', []):
+                if (sname, f"{seg['start_sec']:.1f}") not in top_keys:
+                    continue
+                stem = Path(sname).stem
+                seg_label = f"{seg['start_sec']:.0f}-{seg['end_sec']:.0f}s"
+                title = f"{stem} [{seg_label}]  loss={seg['loss']:.4f}"
+                fig = plot_posteriorgram(title, seg['gt'], seg['pred_probs'])
+                fig.savefig(hard_dir / f"{stem}_{seg_label}.png", dpi=120, bbox_inches='tight')
+                fig.clf()
+                plt.close(fig)
+        plt.close('all')
+        print(f"  Saved top-{top_n} hard train segments → {hard_dir}")
 
     def _log_split(self, fold):
         self.fold_out_dir.mkdir(parents=True, exist_ok=True)
@@ -220,16 +292,14 @@ class Trainer:
             self._fit_iteration(train_loader, val_loader)
 
     def _fit_iteration(self, train_loader, val_loader):
-        num_iterations          = self.cfg.train.num_iterations
-        eval_interval           = self.cfg.train.get('iter_eval_interval', self.cfg.train.get('eval_interval', 200))
-        save_interval           = self.cfg.train.get('save_interval', 1000)
-        early_stopping_patience = self.cfg.train.get('early_stopping_patience', None)
+        num_iterations = self.cfg.train.num_iterations
+        eval_interval  = self.cfg.train.get('iter_eval_interval', self.cfg.train.get('eval_interval', 200))
+        save_interval  = self.cfg.train.get('save_interval', 1000)
 
-        best_val_f1      = 0.0
-        best_step        = 0
-        patience_counter = 0
-        global_step      = 0
-        train_iter       = iter(train_loader)
+        best_val_f1 = 0.0
+        best_step   = 0
+        global_step = 0
+        train_iter  = iter(train_loader)
 
         pbar = tqdm(total=num_iterations, desc=f"Fold {self.fold_idx + 1}")
 
@@ -241,6 +311,7 @@ class Trainer:
                 batch = next(train_iter)
 
             train_loss, train_acc, train_f1 = train_step(batch, self.model, self.optimizer, self.criterion, self.device)
+            current_lr = self.optimizer.param_groups[0]['lr']
             wandb.log({
                 'train/loss':        train_loss,
                 'train/acc':         train_acc,
@@ -249,6 +320,7 @@ class Trainer:
                 'train/f1_gyemyeon': train_f1['f1_gyemyeon'],
                 'train/f1_aniri':    train_f1['f1_aniri'],
                 'train/f1_changjo':  train_f1['f1_changjo'],
+                'train/lr':          current_lr,
             }, step=global_step)
 
             global_step += 1
@@ -258,6 +330,13 @@ class Trainer:
                 val_loss, val_acc, val_f1, val_song_data = run_epoch(
                     val_loader, self.model, self.optimizer, self.criterion, self.device, train=False)
                 val_cm = plot_confusion_matrix(val_song_data)
+
+                if self.scheduler is not None:
+                    if isinstance(self.scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+                        self.scheduler.step(val_f1['f1_macro'])
+                    else:
+                        self.scheduler.step()
+
                 wandb.log({
                     'val/loss':             val_loss,
                     'val/acc':              val_acc,
@@ -271,21 +350,15 @@ class Trainer:
 
                 marker = ''
                 if val_f1['f1_macro'] > best_val_f1:
-                    best_val_f1      = val_f1['f1_macro']
-                    best_step        = global_step
-                    patience_counter = 0
+                    best_val_f1 = val_f1['f1_macro']
+                    best_step   = global_step
                     torch.save(self.model.state_dict(), self.save_path)
                     marker = '  ← best'
-                else:
-                    patience_counter += 1
-                    if early_stopping_patience and patience_counter >= early_stopping_patience:
-                        print(f"Early stopping at step {global_step} (no improvement for {patience_counter} evals)")
-                        break
 
                 print(f"Step {global_step}/{num_iterations} | "
                       f"Train loss {train_loss:.4f}  acc {train_acc:.3f}  f1 {train_f1['f1_macro']:.3f} | "
                       f"Val loss {val_loss:.4f}  acc {val_acc:.3f}  f1 {val_f1['f1_macro']:.3f} "
-                      f"[우조 {val_f1['f1_ujoh']:.3f} / 계면조 {val_f1['f1_gyemyeon']:.3f} / 아니리 {val_f1['f1_aniri']:.3f} / 창조 {val_f1['f1_changjo']:.3f}]{marker}")
+                      f"[우조 {val_f1['f1_ujoh']:.3f} / 계면조 {val_f1['f1_gyemyeon']:.3f} / 아니리 {val_f1['f1_aniri']:.3f} / 창조 {val_f1['f1_changjo']:.3f}]  lr={self.optimizer.param_groups[0]['lr']:.2e}{marker}")
                 pbar.set_description(f"Fold {self.fold_idx + 1} | best f1 {best_val_f1:.3f}")
 
             if global_step % save_interval == 0:
@@ -298,19 +371,18 @@ class Trainer:
         print(f"Fold {self.fold_idx + 1} best val f1: {best_val_f1:.4f} at step {best_step}")
 
     def _fit_epoch(self, train_loader, val_loader):
-        num_epochs              = self.cfg.train.num_epoch
-        eval_interval           = self.cfg.train.get('epoch_eval_interval', self.cfg.train.get('eval_interval', 1))
-        early_stopping_patience = self.cfg.train.get('early_stopping_patience', None)
+        num_epochs    = self.cfg.train.num_epoch
+        eval_interval = self.cfg.train.get('epoch_eval_interval', self.cfg.train.get('eval_interval', 1))
 
-        best_val_f1      = 0.0
-        best_epoch       = 0
-        patience_counter = 0
+        best_val_f1 = 0.0
+        best_epoch  = 0
 
         pbar = tqdm(total=num_epochs, desc=f"Fold {self.fold_idx + 1}")
 
         for epoch in range(num_epochs):
             train_loss, train_acc, train_f1, _ = run_epoch(
                 train_loader, self.model, self.optimizer, self.criterion, self.device, train=True)
+            current_lr = self.optimizer.param_groups[0]['lr']
             wandb.log({
                 'train/loss':        train_loss,
                 'train/acc':         train_acc,
@@ -319,42 +391,45 @@ class Trainer:
                 'train/f1_gyemyeon': train_f1['f1_gyemyeon'],
                 'train/f1_aniri':    train_f1['f1_aniri'],
                 'train/f1_changjo':  train_f1['f1_changjo'],
+                'train/lr':          current_lr,
             }, step=epoch)
 
             pbar.update(1)
 
-            val_loss, val_acc, val_f1, val_song_data = run_epoch(
-                val_loader, self.model, self.optimizer, self.criterion, self.device, train=False)
-            val_cm = plot_confusion_matrix(val_song_data)
-            wandb.log({
-                'val/loss':             val_loss,
-                'val/acc':              val_acc,
-                'val/f1_macro':         val_f1['f1_macro'],
-                'val/f1_ujoh':          val_f1['f1_ujoh'],
-                'val/f1_gyemyeon':      val_f1['f1_gyemyeon'],
-                'val/f1_aniri':         val_f1['f1_aniri'],
-                'val/f1_changjo':       val_f1['f1_changjo'],
-                'val/confusion_matrix': wandb.Image(Image.fromarray(val_cm)),
-            }, step=epoch)
+            if (epoch + 1) % eval_interval == 0:
+                val_loss, val_acc, val_f1, val_song_data = run_epoch(
+                    val_loader, self.model, self.optimizer, self.criterion, self.device, train=False)
+                val_cm = plot_confusion_matrix(val_song_data)
 
-            marker = ''
-            if val_f1['f1_macro'] > best_val_f1:
-                best_val_f1      = val_f1['f1_macro']
-                best_epoch       = epoch + 1
-                patience_counter = 0
-                torch.save(self.model.state_dict(), self.save_path)
-                marker = '  ← best'
-            else:
-                patience_counter += 1
-                if early_stopping_patience and patience_counter >= early_stopping_patience:
-                    print(f"Early stopping at epoch {epoch + 1} (no improvement for {patience_counter} evals)")
-                    break
+                if self.scheduler is not None:
+                    if isinstance(self.scheduler, torch.optim.lr_scheduler.ReduceLROnPlateau):
+                        self.scheduler.step(val_f1['f1_macro'])
+                    else:
+                        self.scheduler.step()
 
-            print(f"Epoch {epoch + 1}/{num_epochs} | "
-                    f"Train loss {train_loss:.4f}  acc {train_acc:.3f}  f1 {train_f1['f1_macro']:.3f} | "
-                    f"Val loss {val_loss:.4f}  acc {val_acc:.3f}  f1 {val_f1['f1_macro']:.3f} "
-                    f"[우조 {val_f1['f1_ujoh']:.3f} / 계면조 {val_f1['f1_gyemyeon']:.3f} / 아니리 {val_f1['f1_aniri']:.3f} / 창조 {val_f1['f1_changjo']:.3f}]{marker}")
-            pbar.set_description(f"Fold {self.fold_idx + 1} | best f1 {best_val_f1:.3f}")
+                wandb.log({
+                    'val/loss':             val_loss,
+                    'val/acc':              val_acc,
+                    'val/f1_macro':         val_f1['f1_macro'],
+                    'val/f1_ujoh':          val_f1['f1_ujoh'],
+                    'val/f1_gyemyeon':      val_f1['f1_gyemyeon'],
+                    'val/f1_aniri':         val_f1['f1_aniri'],
+                    'val/f1_changjo':       val_f1['f1_changjo'],
+                    'val/confusion_matrix': wandb.Image(Image.fromarray(val_cm)),
+                }, step=epoch)
+
+                marker = ''
+                if val_f1['f1_macro'] > best_val_f1:
+                    best_val_f1 = val_f1['f1_macro']
+                    best_epoch  = epoch + 1
+                    torch.save(self.model.state_dict(), self.save_path)
+                    marker = '  ← best'
+
+                print(f"Epoch {epoch + 1}/{num_epochs} | "
+                      f"Train loss {train_loss:.4f}  acc {train_acc:.3f}  f1 {train_f1['f1_macro']:.3f} | "
+                      f"Val loss {val_loss:.4f}  acc {val_acc:.3f}  f1 {val_f1['f1_macro']:.3f} "
+                      f"[우조 {val_f1['f1_ujoh']:.3f} / 계면조 {val_f1['f1_gyemyeon']:.3f} / 아니리 {val_f1['f1_aniri']:.3f} / 창조 {val_f1['f1_changjo']:.3f}]  lr={self.optimizer.param_groups[0]['lr']:.2e}{marker}")
+                pbar.set_description(f"Fold {self.fold_idx + 1} | best f1 {best_val_f1:.3f}")
 
         pbar.close()
         print(f"Fold {self.fold_idx + 1} best val f1: {best_val_f1:.4f} at epoch {best_epoch}")
@@ -388,6 +463,31 @@ class Trainer:
         save_test_csv(segment_results, self.fold_out_dir / "test_results.csv")
         self._save_plots(song_data)
 
+        # Extract version test songs from this fold's test results
+        vt_midi_names = getattr(self, '_vt_midi_names', set())
+        if vt_midi_names:
+            self.vt_song_data = {
+                name: {
+                    'gt':         data['gt'].copy(),
+                    'pred_probs': data['pred_probs'].copy(),
+                    'segments':   [dict(s) for s in data['segments']],
+                }
+                for name, data in song_data.items()
+                if name in vt_midi_names
+            }
+            self.vt_segment_results = [r for r in segment_results if r['song_name'] in vt_midi_names]
+            # Collect paths to already-saved posteriorgram PNGs for version test songs
+            vt_stems = {Path(n).stem for n in vt_midi_names}
+            self.vt_png_paths = [
+                p for p in self.fold_out_dir.glob('*.png')
+                if p.stem.split('_')[0] in vt_stems or any(p.stem.startswith(s) for s in vt_stems)
+            ]
+            print(f"  Version test: {len(self.vt_song_data)} songs captured, {len(self.vt_png_paths)} PNGs collected")
+        else:
+            self.vt_song_data       = {}
+            self.vt_segment_results = []
+            self.vt_png_paths       = []
+
     def _save_plots(self, song_data):
         for sname, data in song_data.items():
             stem = Path(sname).stem
@@ -405,3 +505,94 @@ class Trainer:
             plt.close(fig)
 
         plt.close('all')
+
+# ── Module-level helpers for version test tracking ────────────────────────────
+
+def load_version_test_midi_names(cfg):
+    """Return set of MIDI filenames that correspond to songs in version_test.txt."""
+    import unicodedata, json as _json
+
+    song_strat_dir = Path(cfg.data.dir.get('song_stratified_dir', ''))
+    vt_file = song_strat_dir / 'version_test.txt'
+    if not vt_file.exists():
+        return set()
+
+    vt_hashes = set()
+    for line in vt_file.read_text(encoding='utf-8').splitlines():
+        line = line.strip()
+        if line:
+            vt_hashes.add(line.split()[0])  # "hash_key singer — description"
+
+    midi_dir   = Path(cfg.data.dir.midi_dir)
+    label_path = cfg.data.dir.label_path
+    with open(label_path, encoding='utf-8') as f:
+        raw = _json.load(f)
+
+    vt_midi_names = set()
+    for item in raw:
+        fu = unicodedata.normalize('NFC', item['file_upload'])
+        if fu.split('-')[0] in vt_hashes:
+            midi_name = fu.rsplit('.', 1)[0] + '_vocal.mid'
+            if (midi_dir / midi_name).exists():
+                vt_midi_names.add(midi_name)
+
+    print(f"  Version test MIDI files: {len(vt_midi_names)} found")
+    return vt_midi_names
+
+
+def log_version_test_summary(all_vt_song_data, all_vt_segment_results, all_vt_png_paths, cfg, T):
+    """After all folds: aggregate version test metrics → wandb run + CSV + posteriorgrams."""
+    from .metrics import masked_acc, masked_f1
+    import numpy as np
+
+    if not all_vt_song_data:
+        print("  No version test songs collected — skipping summary.")
+        return
+
+    # Aggregate preds and targets across all accumulated songs
+    all_preds, all_tgts = [], []
+    for data in all_vt_song_data.values():
+        all_preds.append(torch.tensor(np.argmax(data['pred_probs'], axis=-1).flatten()))
+        all_tgts.append(torch.tensor(np.argmax(data['gt'],         axis=-1).flatten()))
+    all_preds = torch.cat(all_preds)
+    all_tgts  = torch.cat(all_tgts)
+
+    total_acc = masked_acc(all_preds, all_tgts)
+    f1        = masked_f1(all_preds, all_tgts)
+
+    print(f"\n===== Version Test Summary ({len(all_vt_song_data)} songs, {len(all_vt_segment_results)} segments) =====")
+    print(f"  Acc: {total_acc:.4f}  Macro F1: {f1['f1_macro']:.4f}  "
+          f"[우조 {f1['f1_ujoh']:.4f} / 계면조 {f1['f1_gyemyeon']:.4f} / "
+          f"아니리 {f1['f1_aniri']:.4f} / 창조 {f1['f1_changjo']:.4f}]")
+
+    # Save CSV + copy already-rendered posteriorgram PNGs from fold dirs
+    out_dir = OUTPUT_DIR / f"version_test_summary_{T}"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    if all_vt_segment_results:
+        save_test_csv(all_vt_segment_results, out_dir / "version_test_results.csv")
+
+    copied = 0
+    for src in all_vt_png_paths:
+        if src.exists():
+            shutil.copy2(src, out_dir / src.name)
+            copied += 1
+    print(f"  Copied {copied} posteriorgram PNGs → {out_dir}")
+
+    # Dedicated wandb summary run (same project as fold runs)
+    wandb.init(
+        project=cfg.project_name,
+        name=f"version_test_summary_{T}",
+        config=OmegaConf.to_container(cfg, resolve=True),
+        reinit=True,
+    )
+    wandb.log({
+        'version_test/acc':         total_acc,
+        'version_test/f1_macro':    f1['f1_macro'],
+        'version_test/f1_ujoh':     f1['f1_ujoh'],
+        'version_test/f1_gyemyeon': f1['f1_gyemyeon'],
+        'version_test/f1_aniri':    f1['f1_aniri'],
+        'version_test/f1_changjo':  f1['f1_changjo'],
+        'version_test/n_songs':     len(all_vt_song_data),
+        'version_test/n_segments':  len(all_vt_segment_results),
+    })
+    wandb.finish()

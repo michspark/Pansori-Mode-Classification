@@ -7,61 +7,9 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Patch
 import csv
 
-def load_stratified_folds_from_genre_files(genre_dir, midi_dir, label_json, k=None, seed=42):
+def load_song_stratified_folds(genre_dir, midi_dir, label_json):
     """
-    Reads genre files (ch.txt, sh.txt, jb.txt, hb.txt, sg.txt) from genre_dir
-    and creates a single stratified 3:1:1 split (train:val:test).
-    Each genre contributes proportionally: first 1/5 -> test, next 1/5 -> val, rest -> train.
-    Each line is a UUID-prefixed key (e.g. 01ed19bb-06-김소희-...).
-    Returns a list with one fold dict that also contains 'split_info' for logging.
-    """
-    import re
-
-    genre_dir = Path(genre_dir)
-    midi_dir = Path(midi_dir)
-
-    with open(label_json, 'r', encoding='utf-8') as f:
-        raw = json.load(f)
-
-    def _midi_key(name):
-        n = name.replace('_vocal.mid', '')
-        n = re.sub(r'^[0-9a-f]+-\d+-', '', n)
-        return n
-
-    key_to_midi = {}
-    for item in raw:
-        fu = unicodedata.normalize('NFC', item['file_upload'])
-        midi_name = fu.rsplit('.', 1)[0] + '_vocal.mid'
-        if (midi_dir / midi_name).exists():
-            key_to_midi[_midi_key(midi_name)] = midi_name
-
-    def _strip_uuid(key):
-        return re.sub(r'^[0-9a-f]+-\d+-', '', key)
-
-    genre_files = sorted(genre_dir.glob('*.txt'))
-
-    genre_songs = []
-    for genre_file in genre_files:
-        keys = [line.strip() for line in genre_file.read_text(encoding='utf-8').splitlines() if line.strip()]
-        midi_names = [key_to_midi[_strip_uuid(key)] for key in keys if _strip_uuid(key) in key_to_midi]
-        genre_songs.append((genre_file.stem, midi_names))
-        print(f"  Genre '{genre_file.stem}': {len(midi_names)} MIDI files")
-
-    k = len(genre_songs)
-    folds = []
-    for i in range(k):
-        test_genre,  test_songs  = genre_songs[i]
-        val_genre,   val_songs   = genre_songs[(i + 1) % k]
-        train_songs = [s for j, (_, songs) in enumerate(genre_songs) if j != i and j != (i + 1) % k for s in songs]
-        folds.append({'train': train_songs, 'val': val_songs, 'test': test_songs,
-                      'split_info': {'train': train_songs, 'val': val_songs, 'test': test_songs}})
-        print(f"  Fold {i + 1} (test={test_genre}, val={val_genre}): train={len(train_songs)}, val={len(val_songs)}, test={len(test_songs)}")
-    return folds
-
-
-def load_half_stratified_folds(genre_dir, midi_dir, label_json):
-    """
-    Reads half-genre files (ch_1.txt, ch_2.txt, hb_1.txt, ...) from genre_dir.
+    Reads song_stratified files (ch_1.txt, ch_2.txt, hb_1.txt, ...) from genre_dir.
     Groups files by base genre name (strip trailing _1/_2).
     For each genre two folds are generated (swapping val and test):
       - Fold A: val=genre_X_1, test=genre_X_2, train=all other 8 halves
@@ -167,6 +115,50 @@ def load_folds_from_files(fold_dir, midi_dir, label_json, k=10):
                 train_songs.extend(chunks[j])
         folds.append({'train': train_songs, 'val': val_songs, 'test': test_songs})
     return folds
+
+
+def load_version_split(split_dir, midi_dir, label_json):
+    """
+    pansori_version_split/ 의 train.txt / val.txt / test.txt 를 읽어
+    단일 fold 딕셔너리 {'train': [...], 'val': [...], 'test': [...]} 를 반환한다.
+    각 파일의 한 줄은 '{hash}-{track}-{singer}-{desc}' 형식이며
+    hash 앞부분과 track 번호를 제거한 키로 MIDI 파일명을 조회한다.
+    """
+    import re
+
+    split_dir = Path(split_dir)
+    midi_dir  = Path(midi_dir)
+
+    with open(label_json, 'r', encoding='utf-8') as f:
+        raw = json.load(f)
+
+    def _midi_key(name):
+        n = name.replace('_vocal.mid', '')
+        n = re.sub(r'^[0-9a-f]+-\d+-', '', n)
+        return n
+
+    key_to_midi = {}
+    for item in raw:
+        fu = unicodedata.normalize('NFC', item['file_upload'])
+        midi_name = fu.rsplit('.', 1)[0] + '_vocal.mid'
+        if (midi_dir / midi_name).exists():
+            key_to_midi[_midi_key(midi_name)] = midi_name
+
+    def _strip_uuid(key):
+        return re.sub(r'^[0-9a-f]+-\d+-', '', key)
+
+    def _load_split(fname):
+        lines = [l.strip() for l in (split_dir / fname).read_text(encoding='utf-8').splitlines() if l.strip()]
+        midi_names = [key_to_midi[_strip_uuid(k)] for k in lines if _strip_uuid(k) in key_to_midi]
+        print(f"  {fname}: {len(lines)} keys -> {len(midi_names)} MIDI files")
+        return midi_names
+
+    train_songs = _load_split('train.txt')
+    val_songs   = _load_split('val.txt')
+    test_songs  = _load_split('test.txt')
+
+    return [{'train': train_songs, 'val': val_songs, 'test': test_songs,
+             'split_info': {'train': train_songs, 'val': val_songs, 'test': test_songs}}]
 
 
 def create_kfold_splits(song_list, k=10, seed=42):
