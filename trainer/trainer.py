@@ -9,7 +9,7 @@ from pathlib import Path
 from omegaconf import OmegaConf
 from torch.utils.data import DataLoader
 
-from .metrics import masked_acc, masked_f1
+from .metrics import masked_acc, masked_acc_per_class, masked_f1
 from datasets.dataset import BaseDataset
 from utils import plot_confusion_matrix, save_test_csv, plot_posteriorgram
 
@@ -63,11 +63,12 @@ def run_epoch(loader, model, optimizer, criterion, device, train=True):
     all_preds = torch.cat(all_preds)
     all_tgts  = torch.cat(all_tgts)
 
-    avg_loss = total_loss / len(loader)
-    avg_acc  = masked_acc(all_preds, all_tgts)
-    f1       = masked_f1(all_preds, all_tgts)
+    avg_loss    = total_loss / len(loader)
+    avg_acc     = masked_acc(all_preds, all_tgts)
+    acc_per_cls = masked_acc_per_class(all_preds, all_tgts)
+    f1          = masked_f1(all_preds, all_tgts)
 
-    return avg_loss, avg_acc, f1, song_data
+    return avg_loss, avg_acc, acc_per_cls, f1, song_data
 
 def run_test_epoch(loader, model, criterion, device, fs=100, window_size=3000):
     """run_epoch(train=False) but also returns per-song GT, softmax probs, and per-segment metrics."""
@@ -130,13 +131,14 @@ def run_test_epoch(loader, model, criterion, device, fs=100, window_size=3000):
         song_data[name]['gt'] = torch.cat(song_data[name]['gt'], dim=0).numpy()
         song_data[name]['pred_probs'] = torch.cat(song_data[name]['pred_probs'], dim=0).numpy()
 
-    all_preds = torch.cat(all_preds)
-    all_tgts  = torch.cat(all_tgts)
-    avg_loss  = total_loss / len(loader)
-    avg_acc   = masked_acc(all_preds, all_tgts)
-    f1        = masked_f1(all_preds, all_tgts)
+    all_preds   = torch.cat(all_preds)
+    all_tgts    = torch.cat(all_tgts)
+    avg_loss    = total_loss / len(loader)
+    avg_acc     = masked_acc(all_preds, all_tgts)
+    acc_per_cls = masked_acc_per_class(all_preds, all_tgts)
+    f1          = masked_f1(all_preds, all_tgts)
 
-    return avg_loss, avg_acc, f1, song_data, segment_results
+    return avg_loss, avg_acc, acc_per_cls, f1, song_data, segment_results
 
 def train_step(batch, model, optimizer, criterion, device):
     model.train()
@@ -149,11 +151,12 @@ def train_step(batch, model, optimizer, criterion, device):
     loss = criterion(out.permute(0, 2, 1), tgt)
     loss.backward()
     optimizer.step()
-    preds = out.detach().argmax(dim=-1).view(-1).cpu()
-    acc = masked_acc(preds, tgt.view(-1).cpu())
-    f1 = masked_f1(preds, tgt.view(-1).cpu())
+    preds       = out.detach().argmax(dim=-1).view(-1).cpu()
+    acc         = masked_acc(preds, tgt.view(-1).cpu())
+    acc_per_cls = masked_acc_per_class(preds, tgt.view(-1).cpu())
+    f1          = masked_f1(preds, tgt.view(-1).cpu())
 
-    return loss.item(), acc, f1
+    return loss.item(), acc, acc_per_cls, f1
 
 
 class Trainer:
@@ -236,7 +239,7 @@ class Trainer:
                                         fs=fs, window_size=window_size, is_train=False)
         train_eval_loader = DataLoader(train_eval_ds, batch_size=1, shuffle=False)
 
-        _, _, _, train_song_data, train_seg_results = run_test_epoch(
+        _, _, _, _, train_song_data, train_seg_results = run_test_epoch(
             train_eval_loader, self.model, self.criterion, self.device,
             fs=fs, window_size=int(window_size * fs))
 
@@ -310,24 +313,28 @@ class Trainer:
                 train_iter = iter(train_loader)
                 batch = next(train_iter)
 
-            train_loss, train_acc, train_f1 = train_step(batch, self.model, self.optimizer, self.criterion, self.device)
+            train_loss, train_acc, train_acc_per_cls, train_f1 = train_step(batch, self.model, self.optimizer, self.criterion, self.device)
             current_lr = self.optimizer.param_groups[0]['lr']
             wandb.log({
-                'train/loss':        train_loss,
-                'train/acc':         train_acc,
-                'train/f1_macro':    train_f1['f1_macro'],
-                'train/f1_ujoh':     train_f1['f1_ujoh'],
-                'train/f1_gyemyeon': train_f1['f1_gyemyeon'],
-                'train/f1_aniri':    train_f1['f1_aniri'],
-                'train/f1_changjo':  train_f1['f1_changjo'],
-                'train/lr':          current_lr,
+                'train/loss':             train_loss,
+                'train/acc':              train_acc,
+                'train/acc_ujoh':         train_acc_per_cls['acc_ujoh'],
+                'train/acc_gyemyeon':     train_acc_per_cls['acc_gyemyeon'],
+                'train/acc_aniri':        train_acc_per_cls['acc_aniri'],
+                'train/acc_changjo':      train_acc_per_cls['acc_changjo'],
+                'train/f1_macro':         train_f1['f1_macro'],
+                'train/f1_ujoh':          train_f1['f1_ujoh'],
+                'train/f1_gyemyeon':      train_f1['f1_gyemyeon'],
+                'train/f1_aniri':         train_f1['f1_aniri'],
+                'train/f1_changjo':       train_f1['f1_changjo'],
+                'train/lr':               current_lr,
             }, step=global_step)
 
             global_step += 1
             pbar.update(1)
 
             if global_step % eval_interval == 0:
-                val_loss, val_acc, val_f1, val_song_data = run_epoch(
+                val_loss, val_acc, val_acc_per_cls, val_f1, val_song_data = run_epoch(
                     val_loader, self.model, self.optimizer, self.criterion, self.device, train=False)
                 val_cm = plot_confusion_matrix(val_song_data)
 
@@ -340,6 +347,10 @@ class Trainer:
                 wandb.log({
                     'val/loss':             val_loss,
                     'val/acc':              val_acc,
+                    'val/acc_ujoh':         val_acc_per_cls['acc_ujoh'],
+                    'val/acc_gyemyeon':     val_acc_per_cls['acc_gyemyeon'],
+                    'val/acc_aniri':        val_acc_per_cls['acc_aniri'],
+                    'val/acc_changjo':      val_acc_per_cls['acc_changjo'],
                     'val/f1_macro':         val_f1['f1_macro'],
                     'val/f1_ujoh':          val_f1['f1_ujoh'],
                     'val/f1_gyemyeon':      val_f1['f1_gyemyeon'],
@@ -380,24 +391,28 @@ class Trainer:
         pbar = tqdm(total=num_epochs, desc=f"Fold {self.fold_idx + 1}")
 
         for epoch in range(num_epochs):
-            train_loss, train_acc, train_f1, _ = run_epoch(
+            train_loss, train_acc, train_acc_per_cls, train_f1, _ = run_epoch(
                 train_loader, self.model, self.optimizer, self.criterion, self.device, train=True)
             current_lr = self.optimizer.param_groups[0]['lr']
             wandb.log({
-                'train/loss':        train_loss,
-                'train/acc':         train_acc,
-                'train/f1_macro':    train_f1['f1_macro'],
-                'train/f1_ujoh':     train_f1['f1_ujoh'],
-                'train/f1_gyemyeon': train_f1['f1_gyemyeon'],
-                'train/f1_aniri':    train_f1['f1_aniri'],
-                'train/f1_changjo':  train_f1['f1_changjo'],
-                'train/lr':          current_lr,
+                'train/loss':             train_loss,
+                'train/acc':              train_acc,
+                'train/acc_ujoh':         train_acc_per_cls['acc_ujoh'],
+                'train/acc_gyemyeon':     train_acc_per_cls['acc_gyemyeon'],
+                'train/acc_aniri':        train_acc_per_cls['acc_aniri'],
+                'train/acc_changjo':      train_acc_per_cls['acc_changjo'],
+                'train/f1_macro':         train_f1['f1_macro'],
+                'train/f1_ujoh':          train_f1['f1_ujoh'],
+                'train/f1_gyemyeon':      train_f1['f1_gyemyeon'],
+                'train/f1_aniri':         train_f1['f1_aniri'],
+                'train/f1_changjo':       train_f1['f1_changjo'],
+                'train/lr':               current_lr,
             }, step=epoch)
 
             pbar.update(1)
 
             if (epoch + 1) % eval_interval == 0:
-                val_loss, val_acc, val_f1, val_song_data = run_epoch(
+                val_loss, val_acc, val_acc_per_cls, val_f1, val_song_data = run_epoch(
                     val_loader, self.model, self.optimizer, self.criterion, self.device, train=False)
                 val_cm = plot_confusion_matrix(val_song_data)
 
@@ -410,6 +425,10 @@ class Trainer:
                 wandb.log({
                     'val/loss':             val_loss,
                     'val/acc':              val_acc,
+                    'val/acc_ujoh':         val_acc_per_cls['acc_ujoh'],
+                    'val/acc_gyemyeon':     val_acc_per_cls['acc_gyemyeon'],
+                    'val/acc_aniri':        val_acc_per_cls['acc_aniri'],
+                    'val/acc_changjo':      val_acc_per_cls['acc_changjo'],
                     'val/f1_macro':         val_f1['f1_macro'],
                     'val/f1_ujoh':          val_f1['f1_ujoh'],
                     'val/f1_gyemyeon':      val_f1['f1_gyemyeon'],
@@ -438,7 +457,7 @@ class Trainer:
         state_dict = torch.load(self.save_path, map_location='cpu')
         self.model.load_state_dict(state_dict)
 
-        test_loss, test_acc, test_f1, song_data, segment_results = run_test_epoch(
+        test_loss, test_acc, test_acc_per_cls, test_f1, song_data, segment_results = run_test_epoch(
             test_loader, self.model, self.criterion, self.device,
             fs=self.cfg.data.fs, window_size=int(self.cfg.data.window_size * self.cfg.data.fs))
 
@@ -451,6 +470,10 @@ class Trainer:
         wandb.log({
             'test/loss':             test_loss,
             'test/acc':              test_acc,
+            'test/acc_ujoh':         test_acc_per_cls['acc_ujoh'],
+            'test/acc_gyemyeon':     test_acc_per_cls['acc_gyemyeon'],
+            'test/acc_aniri':        test_acc_per_cls['acc_aniri'],
+            'test/acc_changjo':      test_acc_per_cls['acc_changjo'],
             'test/f1_macro':         test_f1['f1_macro'],
             'test/f1_ujoh':          test_f1['f1_ujoh'],
             'test/f1_gyemyeon':      test_f1['f1_gyemyeon'],
@@ -476,6 +499,13 @@ class Trainer:
                 if name in vt_midi_names
             }
             self.vt_segment_results = [r for r in segment_results if r['song_name'] in vt_midi_names]
+            # Write per-fold version test CSV to shared dir (for cross-process aggregation)
+            _vt_out_dir = self.cfg.train.get('vt_out_dir', None)
+            if _vt_out_dir and self.vt_segment_results:
+                vt_out_path = Path(_vt_out_dir)
+                vt_out_path.mkdir(parents=True, exist_ok=True)
+                save_test_csv(self.vt_segment_results, vt_out_path / f'fold{self.fold_idx + 1}_vt.csv')
+                print(f"  Version test CSV: {len(self.vt_segment_results)} segments → {vt_out_path}/fold{self.fold_idx + 1}_vt.csv")
             # Collect paths to already-saved posteriorgram PNGs for version test songs
             vt_stems = {Path(n).stem for n in vt_midi_names}
             self.vt_png_paths = [
@@ -542,7 +572,7 @@ def load_version_test_midi_names(cfg):
 
 def log_version_test_summary(all_vt_song_data, all_vt_segment_results, all_vt_png_paths, cfg, T):
     """After all folds: aggregate version test metrics → wandb run + CSV + posteriorgrams."""
-    from .metrics import masked_acc, masked_f1
+    from .metrics import masked_acc, masked_acc_per_class, masked_f1
     import numpy as np
 
     if not all_vt_song_data:
@@ -557,8 +587,9 @@ def log_version_test_summary(all_vt_song_data, all_vt_segment_results, all_vt_pn
     all_preds = torch.cat(all_preds)
     all_tgts  = torch.cat(all_tgts)
 
-    total_acc = masked_acc(all_preds, all_tgts)
-    f1        = masked_f1(all_preds, all_tgts)
+    total_acc   = masked_acc(all_preds, all_tgts)
+    acc_per_cls = masked_acc_per_class(all_preds, all_tgts)
+    f1          = masked_f1(all_preds, all_tgts)
 
     print(f"\n===== Version Test Summary ({len(all_vt_song_data)} songs, {len(all_vt_segment_results)} segments) =====")
     print(f"  Acc: {total_acc:.4f}  Macro F1: {f1['f1_macro']:.4f}  "
@@ -586,13 +617,17 @@ def log_version_test_summary(all_vt_song_data, all_vt_segment_results, all_vt_pn
         reinit=True,
     )
     wandb.log({
-        'version_test/acc':         total_acc,
-        'version_test/f1_macro':    f1['f1_macro'],
-        'version_test/f1_ujoh':     f1['f1_ujoh'],
-        'version_test/f1_gyemyeon': f1['f1_gyemyeon'],
-        'version_test/f1_aniri':    f1['f1_aniri'],
-        'version_test/f1_changjo':  f1['f1_changjo'],
-        'version_test/n_songs':     len(all_vt_song_data),
-        'version_test/n_segments':  len(all_vt_segment_results),
+        'version_test/acc':             total_acc,
+        'version_test/acc_ujoh':        acc_per_cls['acc_ujoh'],
+        'version_test/acc_gyemyeon':    acc_per_cls['acc_gyemyeon'],
+        'version_test/acc_aniri':       acc_per_cls['acc_aniri'],
+        'version_test/acc_changjo':     acc_per_cls['acc_changjo'],
+        'version_test/f1_macro':        f1['f1_macro'],
+        'version_test/f1_ujoh':         f1['f1_ujoh'],
+        'version_test/f1_gyemyeon':     f1['f1_gyemyeon'],
+        'version_test/f1_aniri':        f1['f1_aniri'],
+        'version_test/f1_changjo':      f1['f1_changjo'],
+        'version_test/n_songs':         len(all_vt_song_data),
+        'version_test/n_segments':      len(all_vt_segment_results),
     })
     wandb.finish()

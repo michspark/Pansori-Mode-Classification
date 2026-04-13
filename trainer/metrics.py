@@ -6,6 +6,18 @@ def masked_acc(preds, targets, no_label_class=0):
         return 0.0
     return (preds[mask] == targets[mask]).float().mean().item()
 
+def masked_acc_per_class(preds, targets, no_label_class=0):
+    """Per-class accuracy for 우조/계면조/아니리/창조, excluding no-label frames."""
+    class_names = {1: 'ujoh', 2: 'gyemyeon', 3: 'aniri', 4: 'changjo'}
+    result = {}
+    for cls, name in class_names.items():
+        cls_mask = targets == cls
+        if cls_mask.sum() == 0:
+            result[f'acc_{name}'] = 0.0
+        else:
+            result[f'acc_{name}'] = (preds[cls_mask] == cls).float().mean().item()
+    return result
+
 def masked_f1(preds, targets, no_label_class=0):
     """Per-class and macro F1 for 우조계열/계면조/아니리/창조, excluding no-label frames."""
     mask = targets != no_label_class
