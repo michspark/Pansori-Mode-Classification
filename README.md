@@ -86,13 +86,55 @@ export PANSORI_DATA_ROOT=/path/to/Pansori_Data
 
 It defaults to `../Pansori_Data`, a sibling of this checkout.
 
-<!-- TODO(camera-ready): attach these as GitHub Release assets and fill in sizes -->
+### Pretrained weights
 
-| Asset | Contents | Size |
+All checkpoints are attached to
+[**GitHub Releases**](https://github.com/michspark/Pansori-Mode-Classification/releases/tag/v1.0),
+one asset per representation. Each bundle holds both the **version split**
+(single held-out fold) and the **song-stratified** 10-fold set, each as
+`fold{N}_best_model.pt` next to the `config.yaml` it was trained with — so a
+bundle is self-contained and needs nothing else to run inference.
+
+| Asset | Contains | Size |
 |---|---|---|
-| `checkpoints.tar.gz` | pretrained models per modality and split | TODO |
-| `pansori_contours.tar.gz` | PESTO / CREPE f0 CSVs, transcribed MIDI | TODO |
-| `pansori_splits.tar.gz` | version / song-stratified / random fold index files | TODO |
+| `mel_weights.tar.gz` | `Mel_Original_Version` + `Mel_Original_Song_Stratified` | 9 MB |
+| `mel_sep_weights.tar.gz` | `Mel_Sep_Version` + `Mel_Sep_Stratified` (source-separated) | 9 MB |
+| `pesto_weights.tar.gz` | `Pesto_Version` + `Pesto_Song_Stratified` | 35 MB |
+| `midi_weights.tar.gz` | `MIDI_Version` + `MIDI_Song_Stratified` | 97 MB |
+| `cmert_version_weights.tar.gz` | `layer08_10k_version` (CultureMERT, version split) | 707 MB |
+| `cmert_song_stratified_weights_part{1,2}.tar.gz` | `layer08_song_stratified`, split across two assets | 1.2 GB each |
+| `labels.tar.gz` | `data/Label/` annotations, also tracked in this repo | 236 KB |
+| `SHA256SUMS.txt` | checksums for the assets above | — |
+
+CultureMERT checkpoints are ~253 MB each because the backbone dominates, which
+is why its 10-fold set is split — a single GitHub Release asset is capped at
+2 GiB. No CQT, chroma or CREPE checkpoints exist; train those yourself with the
+matching config.
+
+Extract from the repository root — the archives already carry the `weights/...`
+prefix, so they land in the right place:
+
+```bash
+# pick whichever representations you need
+curl -LO https://github.com/michspark/Pansori-Mode-Classification/releases/download/v1.0/pesto_weights.tar.gz
+curl -LO https://github.com/michspark/Pansori-Mode-Classification/releases/download/v1.0/SHA256SUMS.txt
+
+sha256sum -c SHA256SUMS.txt --ignore-missing   # optional integrity check
+tar xzf pesto_weights.tar.gz                   # -> weights/frame/Pesto_{Version,Song_Stratified}/
+```
+
+Then run inference straight away — `infer/` defaults to the version-split
+checkpoint of each representation:
+
+```bash
+python infer/infer_pesto.py your_contour.f0.csv --out out/
+```
+
+Rebuild the bundles at any time with `bash scripts/make_release_bundles.sh`;
+it excludes periodic snapshots, posteriorgram PNGs and W&B caches, and warns if
+any asset would exceed the 2 GiB limit.
+
+### Corpus
 
 Expected corpus layout:
 
@@ -185,6 +227,9 @@ python train.py --config-path configs/segment --config-name mel_base
 | `KFold` | k-fold over hash keys, computed in-process |
 | `RandomSplit` | single random train/val/test split |
 | `Artist` | needs `data/Stratify/stratify.csv`, **not included** (path hardcoded at `trainers.py:242`) |
+
+Fold membership, per-fold counts and what each protocol actually holds out:
+[`docs/splits.md`](docs/splits.md).
 
 Batch drivers:
 
