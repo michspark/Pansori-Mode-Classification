@@ -269,12 +269,19 @@ python scripts/ensemble/ensemble_inference_song_stratified.py --folds 1 2 3 --no
 python scripts/ensemble/ensemble_inference_song_stratified.py --no_midi
 python scripts/ensemble/ensemble_inference_song_stratified.py --weights 0.35 0.35 0.30
 
-# version-test split, Mel + PESTO + MIDI
+# version-test split, Mel + PESTO + MIDI (weight order: Mel PESTO MIDI)
 python scripts/ensemble/ensemble_vt_mel_pesto_midi.py --weights 0.4 0.2 0.4
+# your own Version runs: pick weights on val, report test once
+python scripts/ensemble/ensemble_vt_mel_pesto_midi.py --split val \
+    --mel_dir weights/version_retrain/mel --pesto_dir weights/version_retrain/pesto \
+    --midi_dir weights/version_retrain/midi --weights 0.4 0.2 0.4
 ```
 
 Results are written to `outputs/ensemble_song_stratified/` as per-fold metrics,
-segment CSVs, VT frame predictions, and a text summary.
+segment CSVs, VT frame predictions, and a text summary. The version-split
+script prints its results (ensemble plus each modality alone) instead of writing
+files. Its `--*_dir` flags take a run dir or a `dir.save_dir` parent holding
+exactly one run, and refuse checkpoints not trained with `train.selection=Version`.
 
 ### 4 · Inference on your own recordings
 
