@@ -8,10 +8,6 @@ weights/
 wandb/
 # per-run CSV/NPZ/summary artifacts
 outputs/
-# run_analysis_categorize.py output (audio + posteriorgrams)
-analysis/
-# run_analysis_simple.py output
-analysis_simple/
 # viewer inference cache
 viewer/cache/
 # built Release assets (regenerate with scripts/make_release_bundles.sh)
@@ -46,14 +42,15 @@ SeparatedAudio/
 PitchShiftedAudio/
 difficult_segments_collection/
 
-# Audio is never committed, except the two clips the figure scripts need.
+# Audio is never committed.
 *.wav
 *.mp3
-!assets/audio/*.wav
 
 # ── Regenerable figures at the repo root ──────────────────────────────────────
 /*.png
 /*.pdf
+# notebook outputs
+notebooks/*.png
 
 # NOTE: *.sh, *.csv, *.ipynb and notebooks/ were previously ignored wholesale,
 # which hid every run script, the label CSV, and both notebooks from the repo.

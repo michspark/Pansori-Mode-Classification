@@ -160,11 +160,8 @@ each is tested exactly once per sweep.
 
 ## Reproducing these numbers
 
-Both listings are generated from the index files and `data/Label/label.csv`:
-
-```bash
-python scripts/analysis/dump_splits.py          # -> docs/version_split.txt, docs/song_stratified.txt
-```
+Both listings were generated from the index files and `data/Label/label.csv`.
+To check them against your copy of the corpus:
 
 ```bash
 # what each index file contains

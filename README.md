@@ -324,17 +324,15 @@ Two properties make this safe to point at a checkpoint you did not train:
 python infer/_check_parity.py
 ```
 
-### 5 · Figures and analysis
+### 5 · Figures
 
 ```bash
 python scripts/figures/make_example_figure.py       # example_figure.{png,pdf}
 python scripts/figures/make_pattern_figure.py       # pattern_figure.{png,pdf}
-python scripts/analysis/run_analysis_categorize.py  # which modality got which segment right
-python scripts/analysis/run_analysis_simple.py      # condensed view of the above
 ```
 
-Figure scripts need trained checkpoints under `weights/`. The two clips in
-`assets/audio/` are inputs to `scripts/analysis/contour_visualization.py`.
+Figure scripts need trained checkpoints under `weights/` and read their audio
+from `$PANSORI_DATA_ROOT/Audio_Original`.
 
 ### 6 · Viewer
 
@@ -370,19 +368,17 @@ preproc/                  # corpus preparation (downsample, pitch shift, hash na
 scripts/
     eval/                 # evaluation on saved checkpoints
     ensemble/             # cross-modality soft voting
-    analysis/             # error categorization, contour plots
     figures/              # paper figure generation
     run/                  # batch drivers for the above
 viewer/                   # FastAPI posteriorgram viewer
 notebooks/                # exploratory notebooks
 data/Label/               # annotations (the only data shipped here)
-assets/audio/             # two clips used by the contour figure
 
 weights/                  # checkpoints (gitignored)
     frame/                # per-modality runs
     midi/                 # MIDI runs inherited from the merged repo
 outputs/                  # per-run CSV / NPZ / summaries (gitignored)
-wandb/ analysis/ analysis_simple/   # experiment artifacts (gitignored)
+wandb/                    # experiment artifacts (gitignored)
 
 requirements.txt          # pip environment
 ```
